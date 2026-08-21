@@ -140,7 +140,7 @@ def run_pipeline(
 
         from services.graph_builder import build_graph, graph_summary
 
-        G = build_graph(papers, concept_to_paper_ids)
+        G = build_graph(papers)
         result["relationship_count"] = G.number_of_edges()
         result["graph_summary"] = graph_summary(G)
 

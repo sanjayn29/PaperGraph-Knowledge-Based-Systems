@@ -142,11 +142,3 @@ def _try_parse(text: str) -> dict | list | None:
     except json.JSONDecodeError:
         return None
 
-
-def merge_dicts(*dicts: dict) -> dict:
-    """Shallow-merge multiple dicts left-to-right (later keys win)."""
-    result: dict = {}
-    for d in dicts:
-        if isinstance(d, dict):
-            result.update(d)
-    return result

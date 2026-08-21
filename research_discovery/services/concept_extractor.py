@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections import Counter, defaultdict
+from collections import defaultdict
 from typing import Optional
 
 from utils.text_utils import (
@@ -155,13 +155,4 @@ def extract_all_concepts(
     return papers, concept_to_paper_ids
 
 
-def get_concept_frequencies(papers: list[dict]) -> Counter:
-    """
-    Return a Counter of concept → total mention count across all papers.
-    Uses the 'concepts' list already populated on each paper dict.
-    """
-    freq: Counter = Counter()
-    for paper in papers:
-        for concept in paper.get("concepts", []):
-            freq[concept] += 1
-    return freq
+

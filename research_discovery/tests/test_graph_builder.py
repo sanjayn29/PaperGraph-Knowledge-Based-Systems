@@ -13,7 +13,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from services.graph_builder import build_graph, graph_summary, get_top_concepts
+from services.graph_builder import build_graph, graph_summary
 from services.graph_analyzer import rank_candidates, compute_centralities
 
 

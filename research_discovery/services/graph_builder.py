@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import logging
 from itertools import combinations
-from typing import Optional
+
 
 import networkx as nx
 
@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 def build_graph(
     papers: list[dict],
-    concept_to_paper_ids: Optional[dict[str, list[str]]] = None,
 ) -> nx.Graph:
     """
     Build a concept co-occurrence graph from the processed papers.
@@ -42,8 +41,6 @@ def build_graph(
     Parameters
     ----------
     papers               : list of paper dicts (each must have 'concepts' list)
-    concept_to_paper_ids : pre-computed mapping from concept → [paper_ids]
-                           (if None, it is derived from the papers directly)
 
     Returns
     -------

@@ -84,6 +84,23 @@ section[data-testid="stSidebar"] {
 }
 section[data-testid="stSidebar"] * { color: var(--text-primary) !important; }
 
+/* ── Sidebar widget overrides (fixes Streamlit JS widgetBackgroundColor/widgetBorderColor/
+   skeletonBackgroundColor empty-string warnings — Streamlit internal theming bug) ── */
+section[data-testid="stSidebar"] .stTextInput input,
+section[data-testid="stSidebar"] .stSelectbox select,
+section[data-testid="stSidebar"] .stMultiSelect > div,
+section[data-testid="stSidebar"] .stNumberInput input,
+section[data-testid="stSidebar"] .stTextArea textarea {
+    background-color: #1f2937 !important;
+    border-color: rgba(48, 54, 61, 0.8) !important;
+    color: #e6edf3 !important;
+}
+section[data-testid="stSidebar"] [data-testid="stSkeleton"],
+section[data-testid="stSidebar"] .stSkeleton {
+    background: linear-gradient(90deg, #161b22 25%, #1f2937 50%, #161b22 75%) !important;
+    background-size: 200% 100% !important;
+}
+
 /* ── Main content area ── */
 .main .block-container { padding: 2rem 2.5rem 3rem; max-width: 1200px; }
 

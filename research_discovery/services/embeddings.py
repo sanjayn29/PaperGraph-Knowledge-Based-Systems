@@ -63,31 +63,6 @@ def get_model() -> Optional["SentenceTransformer"]:  # type: ignore[type-arg]
     return _model
 
 
-def embed_papers(papers: list[dict]) -> dict[str, np.ndarray]:
-    """
-    Compute a 384-dim embedding for each paper using title + abstract.
-
-    Returns
-    -------
-    dict mapping paper_id → np.ndarray of shape (384,)
-    Empty dict if the model is unavailable.
-    """
-    model = get_model()
-    if model is None:
-        return {}
-
-    paper_texts = [
-        f"{p.get('title', '')} {p.get('abstract', '')}".strip()
-        for p in papers
-    ]
-    paper_ids = [p["paper_id"] for p in papers]
-
-    try:
-        embeddings = model.encode(paper_texts, show_progress_bar=False, convert_to_numpy=True)
-        return {pid: emb for pid, emb in zip(paper_ids, embeddings)}
-    except Exception as exc:
-        logger.warning("Paper embedding failed: %s", exc)
-        return {}
 
 
 def embed_concepts(concepts: list[str]) -> dict[str, np.ndarray]:
@@ -113,33 +88,6 @@ def embed_concepts(concepts: list[str]) -> dict[str, np.ndarray]:
         logger.warning("Concept embedding failed: %s", exc)
         return {}
 
-
-def cosine_similarity(a: np.ndarray, b: np.ndarray) -> float:
-    """
-    Compute cosine similarity between two 1-D numpy vectors.
-    Returns 0.0 if either vector has zero norm.
-    """
-    norm_a = np.linalg.norm(a)
-    norm_b = np.linalg.norm(b)
-    if norm_a == 0.0 or norm_b == 0.0:
-        return 0.0
-    return float(np.dot(a, b) / (norm_a * norm_b))
-
-
-def pairwise_similarity(
-    concept_a: str,
-    concept_b: str,
-    concept_embeddings: dict[str, np.ndarray],
-) -> float:
-    """
-    Return cosine similarity between two concepts using their pre-computed embeddings.
-    Returns 0.0 if either concept is missing from the embeddings dict.
-    """
-    emb_a = concept_embeddings.get(concept_a)
-    emb_b = concept_embeddings.get(concept_b)
-    if emb_a is None or emb_b is None:
-        return 0.0
-    return cosine_similarity(emb_a, emb_b)
 
 
 def is_available() -> bool:
