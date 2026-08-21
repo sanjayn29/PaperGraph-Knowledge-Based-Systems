@@ -1,0 +1,33 @@
+# Core
+streamlit>=1.35.0
+python-dotenv>=1.0.0
+
+# PDF Processing
+PyMuPDF>=1.24.0
+
+# Data & Numerics
+numpy>=1.26.0
+pandas>=2.2.0
+
+# Embeddings
+sentence-transformers>=3.0.0
+
+# Graph
+networkx>=3.3
+
+# Visualization
+plotly>=5.22.0
+
+# LLM — Gemini (new google-genai SDK, replaces deprecated google-generativeai)
+google-genai>=1.0.0
+
+# Utilities
+python-dateutil>=2.9.0
+
+# Optional — PyTorch + PyTorch Geometric (GNN component)
+# Uncomment to enable the lightweight GNN encoder (not required)
+# torch>=2.3.0
+# torch-geometric>=2.5.0
+
+# Testing
+pytest>=8.2.0
