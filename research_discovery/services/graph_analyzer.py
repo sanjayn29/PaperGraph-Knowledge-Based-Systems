@@ -5,18 +5,24 @@ Generates and scores candidate concept-pair connections from the knowledge graph
 
 Role in the pipeline
 --------------------
-This module plays the structural-signal role that SE-TGN (the temporal GNN)
-plays in the base paper. Instead of predicting future keyword co-occurrence
-links using a trained temporal graph network, we use a set of interpretable
-graph-theoretic metrics to score candidate pairs from a single-snapshot graph.
+Provides graph-structural features (centrality, betweenness, novelty) that act as
+supporting signals alongside SE-TGN's temporal link-prediction score.
 
-Candidate score formula (documented in the UI's Technical Details section):
-─────────────────────────────────────────────────────────────────────────────
-When GNN component is ACTIVE:
-    candidate_score = 0.40 × graph_score + 0.30 × semantic_similarity + 0.30 × gnn_score
+Candidate score formula (3-tier priority):
+─────────────────────────────────────────
+1. SE-TGN ACTIVE (temporal model available):
+       candidate_score = 0.50 × setgn_score
+                       + 0.30 × graph_score
+                       + 0.20 × semantic_similarity
 
-When GNN component is INACTIVE (fallback):
-    candidate_score = 0.57 × graph_score + 0.43 × semantic_similarity
+2. GCN ACTIVE, SE-TGN inactive (GCN baseline):
+       candidate_score = 0.40 × graph_score
+                       + 0.30 × semantic_similarity
+                       + 0.30 × gnn_score
+
+3. GRAPH ONLY (pure fallback — no PyTorch):
+       candidate_score = 0.57 × graph_score
+                       + 0.43 × semantic_similarity
 ─────────────────────────────────────────────────────────────────────────────
 
 graph_score is derived from:
@@ -39,11 +45,17 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Scoring weight constants
+# ── SE-TGN active (primary temporal signal) ──────────────────
+_W_SETGN_SETGN = 0.50
+_W_SETGN_GRAPH = 0.30
+_W_SETGN_SEM   = 0.20
+# ── GCN active (optional baseline, no temporal) ───────────────
+_W_GCN_GRAPH = 0.40
+_W_GCN_SEM   = 0.30
+_W_GCN_GNN   = 0.30
+# ── Graph only (pure fallback) ────────────────────────────────
 _W_GRAPH_ONLY_GRAPH = 0.57
-_W_GRAPH_ONLY_SEM = 0.43
-_W_FULL_GRAPH = 0.40
-_W_FULL_SEM = 0.30
-_W_FULL_GNN = 0.30
+_W_GRAPH_ONLY_SEM   = 0.43
 
 
 def compute_centralities(G: nx.Graph) -> dict[str, dict[str, float]]:
@@ -113,6 +125,8 @@ def rank_candidates(
     G: nx.Graph,
     concept_embeddings: dict[str, np.ndarray],
     gnn_scores: Optional[dict[tuple[str, str], float]] = None,
+    setgn_scores: Optional[dict[tuple[str, str], float]] = None,
+    prediction_time: Optional[int] = None,
     top_k: int = 20,
     exclude_strong_edges: bool = True,
     strong_edge_threshold: int = 3,
@@ -120,27 +134,33 @@ def rank_candidates(
     """
     Generate and score all candidate concept pairs, returning the top-k.
 
+    Score priority (descending):
+    1. SE-TGN active  → 0.50 × setgn_score + 0.30 × graph_score + 0.20 × semantic
+    2. GCN active     → 0.40 × graph_score + 0.30 × semantic + 0.30 × gnn_score
+    3. Graph only     → 0.57 × graph_score + 0.43 × semantic
+
     Parameters
     ----------
     G                    : the concept co-occurrence graph
     concept_embeddings   : dict from embed_concepts() (may be empty if unavailable)
-    gnn_scores           : optional dict (node_a, node_b) → float from gnn_model
+    gnn_scores           : optional dict (node_a, node_b) → float from gnn_model (GCN)
+    setgn_scores         : optional dict (node_a, node_b) → float from se_tgn (SE-TGN)
+    prediction_time      : the future year being predicted (displayed in UI)
     top_k                : number of top candidates to return
     exclude_strong_edges : if True, skip pairs with very strong co-occurrence
-                           (they are "known" connections, not novel candidates)
     strong_edge_threshold: minimum edge weight to exclude as "already known"
 
     Returns
     -------
     List of candidate dicts sorted by candidate_score descending.
-    Each dict matches the PaperGraph candidate schema.
     """
     nodes = list(G.nodes())
     if len(nodes) < 2:
         logger.warning("Graph has fewer than 2 nodes — no candidates can be generated.")
         return []
 
-    gnn_active = gnn_scores is not None and len(gnn_scores) > 0
+    setgn_active = setgn_scores is not None and len(setgn_scores) > 0
+    gnn_active = (not setgn_active) and gnn_scores is not None and len(gnn_scores) > 0
     centralities = compute_centralities(G)
 
     # Max edge weight for normalization
@@ -175,16 +195,26 @@ def rank_candidates(
         else:
             semantic_sim = 0.0
 
-        # GNN score
         canonical_key = (min(node_a, node_b), max(node_a, node_b))
+
+        # GCN baseline score
         gnn_score = (gnn_scores or {}).get(canonical_key, 0.0)
 
-        # Combined candidate score
-        if gnn_active:
+        # SE-TGN score (primary when available)
+        setgn_score = (setgn_scores or {}).get(canonical_key, 0.0)
+
+        # Combined candidate score — priority: SE-TGN > GCN > graph-only
+        if setgn_active:
             candidate_score = (
-                _W_FULL_GRAPH * graph_score
-                + _W_FULL_SEM * semantic_sim
-                + _W_FULL_GNN * gnn_score
+                _W_SETGN_SETGN * setgn_score
+                + _W_SETGN_GRAPH * graph_score
+                + _W_SETGN_SEM   * semantic_sim
+            )
+        elif gnn_active:
+            candidate_score = (
+                _W_GCN_GRAPH * graph_score
+                + _W_GCN_SEM   * semantic_sim
+                + _W_GCN_GNN   * gnn_score
             )
         else:
             candidate_score = (
@@ -200,8 +230,11 @@ def rank_candidates(
                 "graph_score": round(graph_score, 4),
                 "semantic_similarity": round(semantic_sim, 4),
                 "gnn_score": round(gnn_score, 4) if gnn_active else None,
+                "setgn_score": round(setgn_score, 4) if setgn_active else None,
                 "candidate_score": round(float(np.clip(candidate_score, 0.0, 1.0)), 4),
                 "gnn_active": gnn_active,
+                "setgn_active": setgn_active,
+                "prediction_time": prediction_time,
             }
         )
 

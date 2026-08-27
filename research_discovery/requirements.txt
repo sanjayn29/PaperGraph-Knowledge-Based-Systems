@@ -1,3 +1,8 @@
+# ──────────────────────────────────────────────────────────────
+#  PaperGraph — Python dependencies
+#  Install with: pip install -r requirements.txt
+# ──────────────────────────────────────────────────────────────
+
 # Core
 streamlit>=1.35.0
 python-dotenv>=1.0.0
@@ -24,10 +29,23 @@ google-genai>=1.0.0
 # Utilities
 python-dateutil>=2.9.0
 
-# Optional — PyTorch + PyTorch Geometric (GNN component)
-# Uncomment to enable the lightweight GNN encoder (not required)
-# torch>=2.3.0
-# torch-geometric>=2.5.0
+# Evaluation metrics (AUC, AP, P@K, NDCG@K)
+scikit-learn>=1.4.0
 
 # Testing
 pytest>=8.2.0
+
+# ──────────────────────────────────────────────────────────────
+# Optional — SE-TGN + GCN components
+# ──────────────────────────────────────────────────────────────
+# SE-TGN requires PyTorch (CPU or GPU). The app works without it
+# (falls back to graph + semantic scoring). Install to enable the
+# temporal graph network and GCN baseline.
+#
+# Windows CPU-only install:
+#   pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   pip install torch-geometric
+#
+# Uncomment to include in requirements:
+# torch>=2.3.0
+# torch-geometric>=2.5.0

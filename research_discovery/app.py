@@ -347,13 +347,15 @@ def render_sidebar():
 
 
 def _render_status_sidebar():
-    from services.gnn_model import GNN_AVAILABLE
+    from services.gnn_model import GNN_AVAILABLE, SETGN_AVAILABLE
     from services.embeddings import is_available as emb_available
     import os
 
     llm_key = bool(os.getenv("GEMINI_API_KEY", ""))
 
-    gnn_label = "GNN Active" if GNN_AVAILABLE else "GNN Inactive"
+    setgn_label = "SE-TGN Active" if SETGN_AVAILABLE else "SE-TGN Inactive"
+    setgn_cls = "status-active" if SETGN_AVAILABLE else "status-inactive"
+    gnn_label = "GCN Active" if GNN_AVAILABLE else "GCN Inactive"
     gnn_cls = "status-active" if GNN_AVAILABLE else "status-inactive"
     emb_label = "Embeddings Active" if emb_available() else "Embeddings Inactive"
     emb_cls = "status-active" if emb_available() else "status-inactive"
@@ -363,6 +365,7 @@ def _render_status_sidebar():
     st.markdown(
         f"""
         <div style='display:flex; flex-direction:column; gap:0.4rem; padding: 0.25rem 0;'>
+            <span class='status-badge {setgn_cls}'>{"🟢" if SETGN_AVAILABLE else "⚪"} {setgn_label}</span>
             <span class='status-badge {gnn_cls}'>{"🟢" if GNN_AVAILABLE else "⚪"} {gnn_label}</span>
             <span class='status-badge {emb_cls}'>{"🟢" if emb_available() else "⚪"} {emb_label}</span>
             <span class='status-badge {llm_cls}'>{"🟢" if llm_key else "🟡"} {llm_label}</span>
@@ -370,6 +373,8 @@ def _render_status_sidebar():
         """,
         unsafe_allow_html=True,
     )
+
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -383,13 +388,15 @@ def page_home():
             <div class='hero-title'>PaperGraph</div>
             <div class='hero-subtitle'>
                 Upload 5–10 research papers and discover potentially underexplored connections
-                between concepts — powered by graph analysis, semantic embeddings, and LLM reasoning.
+                between concepts — powered by SE-TGN temporal graph analysis, semantic embeddings, and LLM reasoning.
             </div>
             <div>
-                <span class='hero-badge'>NetworkX Graph Analysis</span>
-                <span class='hero-badge'>Sentence Transformers</span>
-                <span class='hero-badge'>CREF Evaluation</span>
-                <span class='hero-badge'>GIC Insight Generation</span>
+                <span class='hero-badge'>⏱️ SE-TGN Temporal GNN</span>
+                <span class='hero-badge'>🕸️ NetworkX Graph Analysis</span>
+                <span class='hero-badge'>🧠 Sentence Transformers</span>
+                <span class='hero-badge'>📋 CREF Evaluation</span>
+                <span class='hero-badge'>💡 GIC Insight Generation</span>
+                <span class='hero-badge'>📈 AUC / AP / NDCG@K Metrics</span>
             </div>
         </div>
         """,
@@ -402,32 +409,32 @@ def page_home():
             <div class='feature-card'>
                 <div class='feature-icon'>📄</div>
                 <div class='feature-title'>PDF Ingestion</div>
-                <div class='feature-desc'>Upload 5–10 research PDFs. Automatic extraction of title, abstract, year, authors, and full text.</div>
+                <div class='feature-desc'>Upload 5–10 research PDFs. Automatic extraction of title, abstract, year, authors, and full text. Manual year correction supported.</div>
+            </div>
+            <div class='feature-card'>
+                <div class='feature-icon'>⏱️</div>
+                <div class='feature-title'>SE-TGN Temporal GNN</div>
+                <div class='feature-desc'>Concept co-occurrence events are ordered by publication year and fed into a Semantic-Enhanced Temporal Graph Network for future link prediction.</div>
             </div>
             <div class='feature-card'>
                 <div class='feature-icon'>🕸️</div>
                 <div class='feature-title'>Knowledge Graph</div>
-                <div class='feature-desc'>Concepts become nodes; co-occurrence in papers becomes edges. Built with NetworkX.</div>
+                <div class='feature-desc'>Concepts become nodes; co-occurrence in papers becomes edges. Built with NetworkX. Graph metrics provide supporting structural signals.</div>
             </div>
             <div class='feature-card'>
                 <div class='feature-icon'>🧠</div>
                 <div class='feature-title'>Semantic Embeddings</div>
-                <div class='feature-desc'>all-MiniLM-L6-v2 encodes concepts for semantic similarity scoring alongside graph metrics.</div>
-            </div>
-            <div class='feature-card'>
-                <div class='feature-icon'>⚡</div>
-                <div class='feature-title'>Optional GNN</div>
-                <div class='feature-desc'>Lightweight GCN encoder adds a structural signal (requires PyTorch + PyG). Degrades gracefully.</div>
+                <div class='feature-desc'>all-MiniLM-L6-v2 encodes concepts for semantic similarity scoring. Embeddings also serve as node features in SE-TGN messages.</div>
             </div>
             <div class='feature-card'>
                 <div class='feature-icon'>🤖</div>
                 <div class='feature-title'>LLM Evaluation</div>
-                <div class='feature-desc'>Gemini evaluates top candidates on novelty, impact, plausibility, and interdisciplinarity (CREF-style).</div>
+                <div class='feature-desc'>Gemini evaluates top SE-TGN candidates on novelty, impact, plausibility, and interdisciplinarity (CREF-style).</div>
             </div>
             <div class='feature-card'>
-                <div class='feature-icon'>💡</div>
-                <div class='feature-title'>Research Insights</div>
-                <div class='feature-desc'>LLM generates research direction, questions, and a falsifiable hypothesis for the top candidate (GIC-style).</div>
+                <div class='feature-icon'>📈</div>
+                <div class='feature-title'>Evaluation Metrics</div>
+                <div class='feature-desc'>AUC, Average Precision, P@K, and NDCG@K computed across baselines (Random, Graph, GCN, SE-TGN) when sufficient temporal data exists.</div>
             </div>
         </div>
         """,
@@ -506,6 +513,55 @@ def page_analysis():
                 size_kb = f.size / 1024
                 st.markdown(f"- **{f.name}** ({size_kb:.1f} KB)")
 
+        # ── Paper Metadata / Year Override ───────────────────────
+        st.markdown("---")
+        with st.expander("📅 Paper Metadata & Year Correction", expanded=False):
+            st.markdown(
+                """
+                <div style='font-size:0.85rem; color:#8b949e; margin-bottom:0.75rem;'>
+                    SE-TGN uses publication year for temporal ordering. Papers with unreliable
+                    year extraction are shown below. Correct any wrong years before running.
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            from services.pdf_processor import peek_pdf_year
+
+            year_overrides: dict[str, int] = {}
+            for idx, f in enumerate(uploaded_files):
+                # Read bytes for previewing year without moving stream pointer
+                f_bytes = f.getvalue() if hasattr(f, "getvalue") else f.read()
+                detected_year, source = peek_pdf_year(f_bytes, f.name)
+                default_year = detected_year if detected_year else 2024
+
+                col_name, col_year = st.columns([3, 1])
+                with col_name:
+                    if source == "metadata":
+                        badge = f"<span style='color:#3fb950; font-size:0.75rem;'>[metadata: {detected_year}]</span>"
+                    elif source == "text_regex":
+                        badge = f"<span style='color:#58a6ff; font-size:0.75rem;'>[text scan: {detected_year}]</span>"
+                    else:
+                        badge = "<span style='color:#d29922; font-size:0.75rem;'>[estimated: please verify]</span>"
+
+                    st.markdown(
+                        f"<div style='padding-top:0.4rem; font-size:0.88rem;'>📄 {f.name} {badge}</div>",
+                        unsafe_allow_html=True,
+                    )
+                with col_year:
+                    yr = st.number_input(
+                        f"Year for {f.name} ({idx})",
+                        min_value=1950,
+                        max_value=2030,
+                        value=int(default_year),
+                        step=1,
+                        key=f"year_override_{idx}_{f.name}",
+                        label_visibility="collapsed",
+                    )
+                    year_overrides[f.name] = int(yr)
+
+        if "year_overrides" not in st.session_state:
+            st.session_state.year_overrides = {}
+
         # Validation
         if n < 5:
             st.error(f"⚠️ Please upload at least 5 PDFs (you have {n}). A minimum of 5 papers is required for meaningful co-occurrence analysis.")
@@ -518,7 +574,7 @@ def page_analysis():
         run_btn = st.button("🚀 Run Analysis", key="run_analysis_btn", type="primary", use_container_width=True)
 
         if run_btn:
-            _run_analysis(uploaded_files)
+            _run_analysis(uploaded_files, year_overrides=year_overrides if 'year_overrides' in dir() else {})
     else:
         # Upload prompt
         st.markdown(
@@ -545,7 +601,7 @@ def page_analysis():
         _render_result(st.session_state.analysis_result)
 
 
-def _run_analysis(uploaded_files):
+def _run_analysis(uploaded_files, year_overrides: dict = None):
     """Execute the pipeline with live progress updates."""
     from services.analysis_pipeline import run_pipeline
 
@@ -567,6 +623,7 @@ def _run_analysis(uploaded_files):
             progress_callback=progress_callback,
             top_candidates=3,
             save_history=True,
+            year_overrides=year_overrides or {},
         )
     except Exception as exc:
         progress_bar.empty()
@@ -595,6 +652,46 @@ def _render_result(result: dict):
     import plotly.graph_objects as go
     import networkx as nx
 
+    # ── Pipeline visualization ────────────────────────────────
+    tsum = result.get("temporal_summary", {})
+    setgn_active = any(c.get("setgn_active") for c in result.get("candidates", []))
+    eval_result = result.get("evaluation", {})
+
+    st.markdown(
+        f"""
+        <div style='display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;
+                    padding:0.75rem 1rem; background:rgba(88,166,255,0.04);
+                    border:1px solid rgba(88,166,255,0.15); border-radius:12px; margin-bottom:1rem;'>
+            <span style='font-size:0.8rem; color:#8b949e;'>Pipeline:</span>
+            <span style='font-size:0.82rem; color:#e6edf3;'>📄 PDFs</span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:#e6edf3;'>🔍 Concepts</span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:#e6edf3;'>⏱️ Temporal Events ({tsum.get('total_events', 0)})</span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:{'#3fb950' if setgn_active else '#6e7681'};'>
+                🧬 SE-TGN {'✅' if setgn_active else '⚫'}
+            </span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:#e6edf3;'>🔗 Candidates</span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:{'#3fb950' if result.get('llm_available') else '#6e7681'};'>
+                🤖 CREF {'✅' if result.get('llm_available') else '⚫'}
+            </span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:{'#3fb950' if result.get('llm_available') else '#6e7681'};'>
+                💡 GIC {'✅' if result.get('llm_available') else '⚫'}
+            </span>
+            <span style='color:#444c56;'>→</span>
+            <span style='font-size:0.82rem; color:{'#3fb950' if eval_result.get('sufficient_data') else '#6e7681'};'>
+                📈 Eval {'✅' if eval_result.get('sufficient_data') else '⚫'}
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # ── Summary metrics ───────────────────────────────────────
     # ── Summary metrics ───────────────────────────────────────
     st.markdown(
         f"""
@@ -610,6 +707,10 @@ def _render_result(result: dict):
             <div class='metric-card'>
                 <div class='metric-value'>{result.get('relationship_count', 0)}</div>
                 <div class='metric-label'>Relationships</div>
+            </div>
+            <div class='metric-card'>
+                <div class='metric-value'>{tsum.get('total_events', 0)}</div>
+                <div class='metric-label'>Temporal Events</div>
             </div>
             <div class='metric-card'>
                 <div class='metric-value'>{len(result.get('candidates', []))}</div>
@@ -637,7 +738,14 @@ def _render_result(result: dict):
     )
 
     # ── Tabs ─────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4 = st.tabs(["💡 Top Insight", "📊 Candidates", "🕸️ Graph View", "📄 Papers"])
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        "💡 Top Insight",
+        "📊 Candidates",
+        "🕸️ Graph View",
+        "⏱️ Temporal Graph",
+        "📈 Model Evaluation",
+        "📄 Papers",
+    ])
 
     final = result.get("final_result", {})
     candidates = result.get("candidates", [])
@@ -658,8 +766,16 @@ def _render_result(result: dict):
     with tab3:
         _render_graph_viz(result, candidates)
 
-    # ── Tab 4: Papers ────────────────────────────────────────
+    # ── Tab 4: Temporal Graph ─────────────────────────────────
     with tab4:
+        _render_temporal_graph(result)
+
+    # ── Tab 5: Model Evaluation ───────────────────────────────
+    with tab5:
+        _render_evaluation(result)
+
+    # ── Tab 6: Papers ─────────────────────────────────────────
+    with tab6:
         _render_papers(papers)
 
     # ── Technical Details expander ───────────────────────────
@@ -787,11 +903,16 @@ def _render_candidates(candidates: list, mode: str):
         graph_score = cand.get("graph_score", 0)
         sem_score = cand.get("semantic_similarity", 0)
         gnn_score = cand.get("gnn_score")
+        setgn_score = cand.get("setgn_score")
         gnn_active = cand.get("gnn_active", False)
+        setgn_active_flag = cand.get("setgn_active", False)
+        pred_time = cand.get("prediction_time")
 
         score_color = "#3fb950" if score >= 0.7 else ("#f0883e" if score >= 0.4 else "#8b949e")
 
-        gnn_str = f" · GNN: {gnn_score:.3f}" if gnn_active and gnn_score is not None else ""
+        gnn_str = f" · GCN: {gnn_score:.3f}" if gnn_active and gnn_score is not None else ""
+        setgn_str = f" · SE-TGN: {setgn_score:.3f}" if setgn_active_flag and setgn_score is not None else ""
+        pred_str = f" · Predicts for {pred_time}" if pred_time else ""
 
         st.markdown(
             f"""
@@ -803,7 +924,7 @@ def _render_candidates(candidates: list, mode: str):
                 <div class='candidate-score'>
                     Score: <strong style='color:{score_color};'>{score:.3f}</strong>
                     &nbsp;·&nbsp; Graph: {graph_score:.3f}
-                    &nbsp;·&nbsp; Semantic: {sem_score:.3f}{gnn_str}
+                    &nbsp;·&nbsp; Semantic: {sem_score:.3f}{setgn_str}{gnn_str}{pred_str}
                 </div>
             </div>
             """,
@@ -935,6 +1056,217 @@ def _render_graph_viz(result: dict, candidates: list):
             st.metric("Density", f"{gs.get('density', 0):.4f}")
         with col4:
             st.metric("Components", gs.get("connected_components", 0))
+
+
+def _render_temporal_graph(result: dict):
+    """Render the temporal event timeline and year distribution."""
+    import plotly.graph_objects as go
+
+    tsum = result.get("temporal_summary", {})
+    if not tsum or tsum.get("total_events", 0) == 0:
+        st.info(
+            "ℹ️ No temporal event data available. "
+            "This can happen if all papers lack publication years — use the "
+            "Paper Metadata expander to correct years before running."
+        )
+        return
+
+    st.markdown("### ⏱️ Temporal Graph Summary")
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        st.metric("Total Events", tsum.get("total_events", 0))
+    with col2:
+        st.metric("Unique Concepts", tsum.get("unique_concepts", 0))
+    with col3:
+        st.metric("Unique Pairs", tsum.get("unique_pairs", 0))
+    with col4:
+        y_min = tsum.get("year_min")
+        y_max = tsum.get("year_max")
+        st.metric("Year Range", f"{y_min}–{y_max}" if y_min and y_max else "N/A")
+
+    # Per-year event count bar chart
+    papers = result.get("papers", [])
+    year_counts: dict = {}
+    for paper in papers:
+        yr = paper.get("year")
+        if yr:
+            concepts = paper.get("concepts", [])
+            from itertools import combinations as _combs
+            n_pairs = len(list(_combs(set(concepts), 2)))
+            year_counts[yr] = year_counts.get(yr, 0) + n_pairs
+
+    if year_counts:
+        years_sorted = sorted(year_counts.keys())
+        counts = [year_counts[y] for y in years_sorted]
+
+        bar_fig = go.Figure(
+            data=[
+                go.Bar(
+                    x=years_sorted,
+                    y=counts,
+                    marker_color="#58a6ff",
+                    marker_line_color="#1f6feb",
+                    marker_line_width=1,
+                    opacity=0.85,
+                )
+            ],
+            layout=go.Layout(
+                title=dict(text="Concept Co-occurrence Events per Year", font=dict(color="#e6edf3", size=13)),
+                xaxis=dict(
+                    title="Publication Year", tickmode="array",
+                    tickvals=years_sorted, color="#8b949e",
+                    gridcolor="#21262d",
+                ),
+                yaxis=dict(title="Event Count", color="#8b949e", gridcolor="#21262d"),
+                paper_bgcolor="#0d1117", plot_bgcolor="#0d1117",
+                margin=dict(l=20, r=20, t=50, b=20),
+                height=280,
+                font=dict(family="Inter, sans-serif"),
+            ),
+        )
+        st.plotly_chart(bar_fig, width="stretch")
+
+    # Temporal split info
+    eval_result = result.get("evaluation", {})
+    if eval_result.get("train_events") is not None:
+        st.markdown("### 📊 Temporal Split")
+        tcol1, tcol2, tcol3 = st.columns(3)
+        with tcol1:
+            st.metric("Train Events", eval_result.get("train_events", 0))
+        with tcol2:
+            st.metric("Val Events", eval_result.get("val_events", 0))
+        with tcol3:
+            st.metric("Test Events", eval_result.get("test_events", 0))
+    else:
+        st.markdown(
+            f"""
+            <div class='warning-box'>
+                ⚠️ Temporal split unavailable: {eval_result.get('message', 'Insufficient data.')
+                if not eval_result.get('sufficient_data') else 'Split performed.'}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+    st.markdown(
+        """
+        <div class='disclaimer-box' style='font-size:0.8rem;'>
+            📖 <strong>How temporal events work:</strong> Each paper contributes one event per
+            unique concept pair it contains, timestamped by its publication year. SE-TGN
+            processes these chronologically to learn which concept pairs tend to appear
+            together in <em>later</em> papers — predicting future research connections.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _render_evaluation(result: dict):
+    """Render the Model Evaluation tab with AUC/AP/P@K/NDCG@K metrics."""
+    eval_result = result.get("evaluation", {})
+
+    st.markdown("### 📈 Model Evaluation")
+
+    if not eval_result:
+        st.info("No evaluation data available.")
+        return
+
+    if not eval_result.get("sklearn_available", True):
+        st.warning(
+            "**scikit-learn not installed.** Run `pip install scikit-learn` to enable "
+            "AUC, Average Precision, P@K and NDCG@K evaluation metrics."
+        )
+        return
+
+    if not eval_result.get("sufficient_data"):
+        st.info(
+            f"ℹ️ {eval_result.get('message', 'Insufficient temporal data for formal evaluation.')}\n\n"
+            "**Tip:** Upload papers spanning at least 4 distinct publication years to enable "
+            "temporal train/val/test split evaluation."
+        )
+        return
+
+    # Evaluation split stats
+    st.markdown(
+        f"""
+        <div style='display:flex; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem;'>
+            <div class='metric-card'>
+                <div class='metric-value'>{eval_result.get('train_events', 0)}</div>
+                <div class='metric-label'>Train Events</div>
+            </div>
+            <div class='metric-card'>
+                <div class='metric-value'>{eval_result.get('val_events', 0)}</div>
+                <div class='metric-label'>Val Events</div>
+            </div>
+            <div class='metric-card'>
+                <div class='metric-value'>{eval_result.get('test_events', 0)}</div>
+                <div class='metric-label'>Test Events</div>
+            </div>
+            <div class='metric-card'>
+                <div class='metric-value'>{eval_result.get('test_positives', 0)}</div>
+                <div class='metric-label'>Test Positives</div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # Baseline comparison table
+    baselines = eval_result.get("baselines", {})
+    if not baselines:
+        st.info("No baseline comparison data available.")
+        return
+
+    st.markdown("#### Baseline Comparison")
+
+    # Build table data
+    import pandas as pd
+
+    table_rows = []
+    for baseline_name, metrics in baselines.items():
+        if not metrics.get("sufficient_data"):
+            row = {
+                "Method": baseline_name,
+                "AUC": "–",
+                "AP": "–",
+                "P@10": "–",
+                "NDCG@10": "–",
+                "Note": metrics.get("message", "Insufficient data"),
+            }
+        else:
+            pk = metrics.get("precision_at_k", {})
+            nk = metrics.get("ndcg_at_k", {})
+            is_setgn = baseline_name == "SE-TGN"
+            row = {
+                "Method": f"⭐ {baseline_name}" if is_setgn else baseline_name,
+                "AUC": f"{metrics['auc']:.4f}",
+                "AP": f"{metrics['ap']:.4f}",
+                "P@10": f"{pk.get('p@10', 0):.4f}",
+                "NDCG@10": f"{nk.get('ndcg@10', 0):.4f}",
+                "Note": "",
+            }
+        table_rows.append(row)
+
+    df = pd.DataFrame(table_rows)
+    st.dataframe(
+        df,
+        width="stretch",
+        hide_index=True,
+    )
+
+    st.markdown(
+        """
+        <div class='disclaimer-box' style='font-size:0.8rem;'>
+            ⚠️ <strong>Evaluation honesty note:</strong> Metrics are computed on the
+            held-out <em>test</em> papers from a year-based temporal split. With only 5–10
+            uploaded PDFs, the test set is very small, so AUC and AP values have very high
+            variance and should NOT be interpreted as stable performance estimates.
+            This evaluation exists to show the methodology, not to claim validated performance.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def _render_papers(papers: list):

@@ -129,3 +129,25 @@ def get_top_concepts(G: nx.Graph, n: int = 10) -> list[tuple[str, int]]:
     """Return the top-n concepts by degree centrality."""
     degree_dict = dict(G.degree())
     return sorted(degree_dict.items(), key=lambda x: x[1], reverse=True)[:n]
+
+
+# ─────────────────────────────────────────────────────────────
+# Temporal graph factory — convenience re-export
+# ─────────────────────────────────────────────────────────────
+# Imported here so callers can do:
+#     from services.graph_builder import build_graph, build_temporal_events
+# without needing to know about the separate temporal_graph module.
+
+def build_temporal_events(papers: list[dict], concept_embeddings: dict) -> tuple:
+    """
+    Build a TemporalGraph from processed papers.
+
+    Delegates to services.temporal_graph.build_temporal_events().
+
+    Returns
+    -------
+    (temporal_graph, warnings)  — see temporal_graph.build_temporal_events docstring.
+    """
+    from services.temporal_graph import build_temporal_events as _build
+    return _build(papers, concept_embeddings)
+

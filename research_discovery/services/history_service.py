@@ -51,7 +51,7 @@ def save_analysis(result: dict) -> Optional[str]:
     """
     history_dir = _ensure_history_dir()
 
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     analysis_id = f"analysis_{timestamp}"
 
     # Sanitize: remove full_text from papers
@@ -68,10 +68,12 @@ def save_analysis(result: dict) -> Optional[str]:
         "concept_count": result.get("concept_count", 0),
         "relationship_count": result.get("relationship_count", 0),
         "graph_summary": result.get("graph_summary", {}),
+        "temporal_summary": result.get("temporal_summary", {}),
         "analysis_mode": result.get("analysis_mode", "Lightweight Graph Analysis"),
         "candidates": result.get("candidates", []),
         "final_result": result.get("final_result", {}),
         "llm_available": result.get("llm_available", False),
+        "evaluation": result.get("evaluation", {}),
         "warnings": result.get("warnings", []),
     }
 

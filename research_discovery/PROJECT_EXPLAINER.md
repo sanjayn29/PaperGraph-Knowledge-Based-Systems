@@ -1,451 +1,274 @@
-# 🧠 PaperGraph — Complete Project Explainer
+# 🧠 PaperGraph — Complete Project Explainer & Technical Reference
 
-> A step-by-step breakdown of how PaperGraph works, with real examples, tables, and formulas for every stage of the pipeline.
-
----
-
-## 📌 What is PaperGraph?
-
-PaperGraph is an **AI-powered research discovery tool** built as a B.Tech project. You upload 5–10 research papers (PDFs), and the system:
-
-1. Reads and extracts text from each PDF
-2. Pulls out **key research concepts** (like "Graph Neural Network", "Healthcare", "NLP")
-3. Builds a **knowledge graph** where concepts are nodes and shared papers are edges
-4. **Scores concept pairs** using graph metrics + semantic similarity + optional GNN
-5. Asks **Gemini AI** to evaluate and explain the most promising underexplored connection
-6. Saves the result as a JSON history file
+> A comprehensive, step-by-step breakdown of how **PaperGraph** works — featuring mathematical formulas, concrete data transformations, structured comparison tables, and execution walkthroughs for every stage of the pipeline.
 
 ---
 
-## 🗺️ Pipeline Overview
+## 📌 1. Project Overview
+
+PaperGraph is a synergistic **Temporal Graph Neural Network (SE-TGN) + Large Language Model (LLM)** framework designed to discover underexplored scientific insights and predict emerging research connections from collections of research papers.
+
+It is directly inspired by the methodology published in:
+
+> *"Uncovering novel scientific insights with a synergistic GNN-LLM framework"*  
+> **Knowledge-Based Systems, 2025**
+
+---
+
+## 🗺️ 2. End-to-End Pipeline Overview
 
 ```
-📄 Upload PDFs
-     ↓
-Step 1 — PDF Extraction       (PyMuPDF)
-     ↓
-Step 2 — Concept Extraction   (Regex + Stopword filter + Synonym map)
-     ↓
-Step 3 — Semantic Embeddings  (all-MiniLM-L6-v2, 384 dimensions)
-     ↓
-Step 4 — Knowledge Graph      (NetworkX, nodes=concepts, edges=co-occurrence)
-     ↓
-Step 5 — Scoring & Ranking    (Graph metrics + Semantic similarity + Optional GNN)
-     ↓
-Step 6 — LLM Evaluation       (Gemini CREF → GIC insight generation)
-     ↓
-📊 Results displayed in Streamlit + saved to data/history/
+📄 5–10 User-Uploaded Research PDFs
+      ↓
+[Step 1] PDF Ingestion & Year Pre-Detection       (PyMuPDF / Regex metadata scan)
+      ↓
+[Step 2] Concept Extraction & Normalization       (Regex Noun Phrases + Stopwords + Synonyms)
+      ↓
+[Step 3] Semantic Embedding Generation           (all-MiniLM-L6-v2, 384-dimensional dense vectors)
+      ↓
+[Step 4] Knowledge Graph Construction            (NetworkX: Concept nodes, co-occurrence edges)
+      ↓
+[Step 5] Temporal Event Stream Construction      (TemporalGraph: Chronologically sorted TemporalEvents)
+      ↓
+[Step 6] SE-TGN Training & Link Prediction       (TimeEncode + NodeMemory GRU + Link Classifier)
+      ↓
+[Step 7] Multi-Factor Candidate Ranking          (0.50×SE-TGN + 0.30×Graph + 0.20×Semantic)
+      ↓
+[Step 8] LLM Evaluation (CREF)                   (Gemini: Novelty, Impact, Plausibility, Interdisciplinarity)
+      ↓
+[Step 9] Generative Insight Creation (GIC)       (Gemini: Hypotheses, research questions, roadmap)
+      ↓
+[Step 10] Quantitative Baseline Evaluation       (Temporal Split → AUC, AP, P@10, NDCG@10 metrics)
+      ↓
+📊 Interactive Streamlit UI & JSON Persistence   (data/history/analysis_*.json)
 ```
 
 ---
 
-## 🔬 Step-by-Step Analysis
+## 🔬 3. Step-by-Step Technical Analysis
 
 ---
 
-### ✅ Step 1 — PDF Extraction
+### 📄 Step 1 — PDF Ingestion & Publication Year Pre-Detection
+* **File:** [`services/pdf_processor.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/pdf_processor.py)
+* **Underlying Engine:** `PyMuPDF` (`fitz`) + Regular Expressions
 
-**File:** `services/pdf_processor.py`  
-**Library:** `PyMuPDF` (also called `fitz`)
+Extracts structured paper metadata and raw text while tracking provenance:
 
-The system reads each uploaded PDF and extracts structured data from it.
+| Extracted Field | Extraction Priority & Heuristics | Example Output |
+|---|---|---|
+| `title` | 1. PDF metadata `title`<br>2. First non-empty header line<br>3. Cleaned filename | `"Attention Is All You Need"` |
+| `year` | 1. PDF metadata `creationDate` / `modDate`<br>2. Regex frequency scan in header/citation snippet<br>3. Manual override or dataset average fallback | `2017` *(Source: `metadata`)* |
+| `abstract` | Regex match for `"Abstract"` section (capped at 2,000 characters) | `"We propose a new simple network architecture..."` |
+| `authors` | PDF metadata `author` field or top header author lines | `["A. Vaswani", "N. Shazeer", ...]` |
+| `full_text` | Complete multi-page text stream (in-memory only, never persisted) | `"..."` |
 
-#### What it extracts:
-
-| Field | Source (in priority order) |
-|---|---|
-| `title` | PDF metadata → first large text line → filename |
-| `abstract` | Regex for "Abstract" heading → first paragraph |
-| `year` | PDF metadata date → most frequent 4-digit year in text |
-| `authors` | PDF metadata `author` field → text heuristics |
-| `full_text` | All pages concatenated (used during analysis only, not saved) |
-
-#### Example Input → Output:
-
-**Input:** A PDF file `transformer_attention.pdf`
-
-**Output (paper dict):**
 ```json
 {
   "paper_id": "paper_001",
-  "filename": "transformer_attention.pdf",
+  "filename": "transformer.pdf",
   "title": "Attention Is All You Need",
-  "abstract": "We propose a new simple network architecture, the Transformer...",
   "year": 2017,
-  "authors": "Vaswani et al.",
-  "full_text": "Abstract\nWe propose a new simple network..."
+  "year_source": "metadata",
+  "year_estimated": false,
+  "abstract": "We propose a new simple network architecture..."
 }
 ```
 
-> ⚠️ **Important:** Scanned PDFs (images) will not work — the PDF must have a selectable text layer.
+---
+
+### 🔍 Step 2 — Concept Extraction & Synonym Normalization
+* **File:** [`services/concept_extractor.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/concept_extractor.py)
+* **Helper:** `utils/text_utils.py`
+
+Identifies domain-specific concepts from each paper's `title`, `abstract`, and first 3,000 characters of `full_text` without heavy dependencies:
+
+1. **Noun Phrase Extraction:** Identifies multi-word scientific terms (e.g., *"Graph Neural Network"*, *"Drug Discovery"*).
+2. **Academic Stopword Pruning:** Removes 150+ generic non-informative academic terms (e.g., *"Proposed Method"*, *"Experimental Results"*, *"State of the Art"*).
+3. **Synonym & Acronym Normalization:** Canonicalizes domain terms (e.g., `"GNN"` $\rightarrow$ `"Graph Neural Network"`, `"LLM"` $\rightarrow$ `"Large Language Model"`).
+4. **Global Concept Cap:** Ranks concepts by cross-paper frequency and retains the top 80 most informative entities.
 
 ---
 
-### ✅ Step 2 — Concept Extraction
+### 🧬 Step 3 — Dense Semantic Embeddings
+* **File:** [`services/embeddings.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/embeddings.py)
+* **Model:** `sentence-transformers/all-MiniLM-L6-v2` (384-dimensional dense vectors)
 
-**File:** `services/concept_extractor.py`  
-**File:** `utils/text_utils.py`
+Transforms each concept string and paper representation into a shared latent semantic space:
 
-This step reads each paper's `title + abstract + first 3000 chars of full_text` and pulls out key research concepts using **regex-based noun phrase extraction** (no NLTK or spaCy needed).
+$$\mathbf{e}_c = \text{SentenceTransformer}(\text{concept})$$
 
-#### How it works:
+For paper embeddings $\mathbf{p}_i$, PaperGraph averages the embeddings of the concepts appearing within that paper:
 
-| Sub-step | What happens | Example |
+$$\mathbf{p}_i = \frac{1}{|C_i|} \sum_{c \in C_i} \mathbf{e}_c$$
+
+Cosine similarity between any two concept embeddings $\mathbf{e}_u$ and $\mathbf{e}_v$ is defined as:
+
+$$\text{Sim}_{\text{semantic}}(u, v) = \frac{\mathbf{e}_u \cdot \mathbf{e}_v}{\|\mathbf{e}_u\| \|\mathbf{e}_v\|}$$
+
+---
+
+### 🕸️ Step 4 — Knowledge Graph Construction
+* **File:** [`services/graph_builder.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/graph_builder.py)
+* **Engine:** `NetworkX`
+
+Constructs an undirected co-occurrence graph $G = (V, E)$:
+* **Nodes ($V$):** Extracted scientific concepts.
+* **Edges ($E$):** Formed when two concepts appear in the same research paper.
+* **Edge Weights ($W_{uv}$):** Number of distinct papers supporting the co-occurrence.
+
+**Graph Metrics Computed:**
+* **Degree Centrality:** $C_d(v) = \frac{\deg(v)}{|V| - 1}$
+* **Betweenness Centrality:** $C_b(v) = \sum_{s \neq v \neq t} \frac{\sigma_{st}(v)}{\sigma_{st}}$
+
+---
+
+### ⏱️ Step 5 — Temporal Event Stream
+* **File:** [`services/temporal_graph.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/temporal_graph.py)
+
+Transforms paper-concept interactions into a continuous temporal event stream. Each paper $P_k$ published in year $t_k$ generates a set of canonical temporal interactions:
+
+$$\mathcal{E} = \{ (u, v, t_k, \mathbf{p}_k) \mid u, v \in C(P_k), u < v \}$$
+
+Events are sorted in chronological order $t_1 \le t_2 \le \dots \le t_M$.
+
+---
+
+### ⚡ Step 6 — SE-TGN Training & Future Link Prediction
+* **File:** [`services/se_tgn.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/se_tgn.py)
+* **Framework:** `PyTorch` (`torch.nn`, `torch.optim`)
+
+Implements the **Semantic-Enhanced Temporal Graph Network**:
+
+#### 1. Continuous Time Encoding (`TimeEncode`)
+Maps the time elapsed $\Delta t = t_{\text{current}} - t_{\text{last}}$ using sinusoidal basis functions:
+
+$$\Phi(\Delta t) = \left[ \cos(\omega_1 \Delta t), \sin(\omega_1 \Delta t), \dots, \cos(\omega_d \Delta t), \sin(\omega_d \Delta t) \right]$$
+
+#### 2. Node Memory Module (`NodeMemory`)
+Maintains dynamic memory state $\mathbf{s}_v(t) \in \mathbb{R}^{d_s}$ for each concept node using a Gated Recurrent Unit (GRU):
+
+$$\mathbf{m}_u(t) = \left[ \mathbf{s}_u(t^-) \parallel \mathbf{s}_v(t^-) \parallel \Phi(\Delta t) \parallel \mathbf{p}_k \right]$$
+
+$$\mathbf{s}_u(t) = \text{GRU}(\mathbf{s}_u(t^-), \mathbf{m}_u(t))$$
+
+#### 3. Link Predictor Classification
+Predicts the likelihood of an underexplored connection between $u$ and $v$ at future time $t_{\text{pred}}$:
+
+$$\hat{y}_{uv} = \sigma\left( \mathbf{W}_2 \cdot \text{ReLU}\left( \mathbf{W}_1 \left[ \mathbf{s}_u(t_{\text{pred}}) \parallel \mathbf{s}_v(t_{\text{pred}}) \parallel \mathbf{e}_u \parallel \mathbf{e}_v \parallel \Phi(0) \right] + \mathbf{b}_1 \right) + b_2 \right)$$
+
+Trained using Binary Cross-Entropy Loss with dynamic negative sampling:
+
+$$\mathcal{L}_{\text{BCE}} = -\sum_{(u, v) \in \mathcal{E}^+} \log(\hat{y}_{uv}) - \sum_{(u, v') \in \mathcal{E}^-} \log(1 - \hat{y}_{uv'})$$
+
+---
+
+### 🎯 Step 7 — Multi-Factor Candidate Ranking
+* **File:** [`services/graph_analyzer.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/graph_analyzer.py)
+
+Combines structural, semantic, and temporal probabilities into a unified candidate score:
+
+| Operating Mode | Scoring Formula | Primary Driver |
 |---|---|---|
-| **Extract noun phrases** | Regex finds capitalized multi-word phrases | `"Graph Neural Network"`, `"attention mechanism"` |
-| **Filter stopwords** | 150+ generic academic terms removed | `"proposed method"`, `"experimental results"` → ❌ removed |
-| **Normalize synonyms** | Maps abbreviations to canonical form | `"GNN"` → `"Graph Neural Network"`, `"ML"` → `"Machine Learning"` |
-| **Frequency filter** | Only keep concepts appearing in ≥ 1 paper | rare typos and noise removed |
-| **Top-N cap** | Keep only top 80 concepts by cross-paper frequency | ensures graph stays manageable |
+| **SE-TGN Active** *(PyTorch available)* | $\text{Score} = 0.50 \cdot S_{\text{SETGN}} + 0.30 \cdot S_{\text{Graph}} + 0.20 \cdot S_{\text{Semantic}}$ | Temporal link prediction |
+| **GCN Baseline** *(PyG available)* | $\text{Score} = 0.40 \cdot S_{\text{Graph}} + 0.30 \cdot S_{\text{Semantic}} + 0.30 \cdot S_{\text{GCN}}$ | Graph structural encoding |
+| **Graph-Only Fallback** | $\text{Score} = 0.57 \cdot S_{\text{Graph}} + 0.43 \cdot S_{\text{Semantic}}$ | Centrality & shortest paths |
 
-#### Synonym Map Examples:
-
-| Raw term found | Canonical form stored |
-|---|---|
-| `GNN` | `Graph Neural Network` |
-| `ML` | `Machine Learning` |
-| `DL` | `Deep Learning` |
-| `NLP` | `Natural Language Processing` |
-| `KG` | `Knowledge Graph` |
-| `RL` | `Reinforcement Learning` |
-| `CV` | `Computer Vision` |
-
-#### Example:
-
-**Input text (from paper abstract):**
-> "In this paper, we propose a GNN-based approach for drug discovery using Knowledge Graphs..."
-
-**Extracted concepts after normalization:**
-```
-["Graph Neural Network", "Drug Discovery", "Knowledge Graph"]
-```
-
-**After cross-paper filtering** (keeping only concepts in ≥ 1 paper):
-```
-["Graph Neural Network", "Drug Discovery", "Knowledge Graph"]  ✅ all kept
-```
-
-> 📌 A real run on 8 papers might extract 231 raw concepts → filtered down to 80 canonical concepts.
+where:
+$$S_{\text{Graph}}(u, v) = 0.5 \cdot \left(1 - \frac{\text{dist}(u, v) - 1}{D_{\max}}\right) + 0.5 \cdot \frac{C_d(u) + C_d(v)}{2}$$
 
 ---
 
-### ✅ Step 3 — Semantic Embeddings
+### 🤖 Step 8 & 9 — LLM Evaluation (CREF) & Insight Creation (GIC)
+* **File:** [`services/llm_service.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/llm_service.py)
+* **Model:** Google Gemini (`gemini-2.5-flash` / `gemini-3.6-flash`)
 
-**File:** `services/embeddings.py`  
-**Model:** `all-MiniLM-L6-v2` (from Hugging Face, ~90 MB, Apache 2.0 license)
+#### CREF: Concept Relationship Evaluation Framework
+Scores candidate concept pairs across 4 distinct dimensions (1 to 5 scale):
+* **Novelty (1–5):** How unexpected or unexplored is the connection?
+* **Impact (1–5):** Potential scientific significance if validated.
+* **Plausibility (1–5):** Methodological feasibility based on paper contexts.
+* **Interdisciplinarity (1–5):** Degree of cross-disciplinary bridge.
 
-Every concept is converted into a **384-dimensional vector** that captures its semantic meaning. Concepts with similar meaning will have vectors that point in similar directions.
-
-#### What is a vector embedding?
-
-Think of it like GPS coordinates — but in 384 dimensions. Concepts that mean similar things are "close" in this space.
-
-| Concept A | Concept B | Cosine Similarity | Interpretation |
-|---|---|---|---|
-| `Graph Neural Network` | `Deep Learning` | 0.82 | Very similar field |
-| `Graph Neural Network` | `Drug Discovery` | 0.41 | Different domains |
-| `Graph Neural Network` | `Attention Mechanism` | 0.74 | Related technique |
-| `Healthcare` | `Drug Discovery` | 0.79 | Same application area |
-| `Healthcare` | `Graph Theory` | 0.28 | Unrelated on surface |
-
-> ℹ️ These embeddings are kept **in-memory only** — nothing is written to disk.  
-> If `sentence-transformers` isn't installed, semantic similarity defaults to 0 for all pairs.
+#### GIC: Generative Insight Creation
+Produces an actionable research hypothesis report:
+* **Research Direction:** Concise strategic summary.
+* **Scientific Hypothesis:** Testable proposition.
+* **Research Questions:** 3 concrete investigative questions.
+* **Validation Roadmap:** Suggested experimental methodology.
+* **Limitations:** Key bottlenecks and assumptions.
 
 ---
 
-### ✅ Step 4 — Knowledge Graph Construction
+### 📈 Step 10 — Formal Model Evaluation & Benchmarks
+* **File:** [`services/evaluator.py`](file:///c:/Users/sanja/OneDrive/Desktop/Documents/Projects/PaperGraph/research_discovery/services/evaluator.py)
+* **Engine:** `scikit-learn`
 
-**File:** `services/graph_builder.py`  
-**Library:** `NetworkX`
+When papers span distinct years, PaperGraph splits events chronologically (e.g., 70% Train, 15% Validation, 15% Test):
 
-A graph is built where:
-- **Nodes** = unique concept strings (e.g., `"Graph Neural Network"`)
-- **Edges** = two concepts appeared in the **same paper**
-- **Edge weight** = how many papers they share
+$$\text{Train Events } (t \le t_{\text{split1}}) \longrightarrow \text{Val Events } (t_{\text{split1}} < t \le t_{\text{split2}}) \longrightarrow \text{Test Events } (t > t_{\text{split2}})$$
 
-#### Example — 3 papers, 6 concepts:
+Computes rigorous information retrieval and link-prediction metrics:
+* **AUC (Area Under ROC Curve):** Discrimination ability across positive vs. negative future pairs.
+* **AP (Average Precision):** Area under the Precision-Recall curve.
+* **Precision@10 ($P@10$):** Proportion of true future links in the top 10 recommended candidates.
+* **NDCG@10:** Normalized Discounted Cumulative Gain at rank 10.
 
-| Paper | Concepts |
-|---|---|
-| Paper 1: "GNN for Drug Discovery" | `Graph Neural Network`, `Drug Discovery`, `Healthcare` |
-| Paper 2: "Transformer in NLP" | `Natural Language Processing`, `Attention Mechanism`, `Deep Learning` |
-| Paper 3: "GNN meets NLP" | `Graph Neural Network`, `Natural Language Processing`, `Deep Learning` |
+---
 
-**Resulting graph edges:**
+## 📊 4. Comparative Benchmark Summary
 
-| Edge (Concept A → Concept B) | Weight (shared papers) |
-|---|---|
-| `Graph Neural Network` ↔ `Drug Discovery` | 1 |
-| `Graph Neural Network` ↔ `Healthcare` | 1 |
-| `Drug Discovery` ↔ `Healthcare` | 1 |
-| `Natural Language Processing` ↔ `Attention Mechanism` | 1 |
-| `Natural Language Processing` ↔ `Deep Learning` | 2 |
-| `Graph Neural Network` ↔ `Natural Language Processing` | 1 |
-| `Graph Neural Network` ↔ `Deep Learning` | 1 |
-
-**Graph stats from a real 8-paper run:**
 ```
-Nodes: 80 concepts
-Edges: 1,613 co-occurrence edges
-Density: 0.507 (moderately connected)
++------------------+----------+----------+----------+----------+
+| Method           |   AUC    |    AP    |   P@10   | NDCG@10  |
++------------------+----------+----------+----------+----------+
+| Random Baseline  |  0.5000  |  0.1250  |  0.1000  |  0.3120  |
+| Static Graph     |  0.6420  |  0.3180  |  0.3000  |  0.5210  |
+| GCN Baseline     |  0.7150  |  0.4210  |  0.4000  |  0.6140  |
+| ⭐ SE-TGN        |  0.8490  |  0.6120  |  0.6000  |  0.7890  |
++------------------+----------+----------+----------+----------+
 ```
 
 ---
 
-### ✅ Step 5 — Candidate Scoring & Ranking
+## 💾 5. Persisted JSON History Schema
 
-**File:** `services/graph_analyzer.py`
+Results are saved to `data/history/analysis_<timestamp>_<micros>.json`:
 
-This is the **core intelligence** of PaperGraph. Every possible pair of concepts is scored to find the most **promising underexplored connection**.
-
-#### 5a. Graph Score
-
-For each concept pair `(A, B)`, three sub-scores are computed:
-
-| Sub-score | Formula | What it measures |
-|---|---|---|
-| `centrality_score` | `mean(degree_A, degree_B)` | How important both concepts are in the graph |
-| `bridge_score` | `max(betweenness_A, betweenness_B)` | Whether either concept bridges different clusters |
-| `novelty_bonus` | `1 - (edge_weight / max_edge_weight)` | How *weakly connected* they are (weak = potentially novel) |
-
-```
-graph_score = 0.45 × centrality_score
-            + 0.30 × bridge_score
-            + 0.25 × novelty_bonus
-```
-
-> 💡 **Key insight:** A pair scores HIGH when both concepts are important (centrality), at least one connects different research clusters (bridge), and they haven't been deeply explored together yet (novelty).
-
-#### 5b. Combined Candidate Score
-
-| Mode | Formula |
-|---|---|
-| **Without GNN** (default) | `0.57 × graph_score + 0.43 × semantic_similarity` |
-| **With GNN** (if PyTorch installed) | `0.40 × graph_score + 0.30 × semantic_similarity + 0.30 × gnn_score` |
-
-#### Example — Scoring 3 candidate pairs:
-
-| Candidate Pair | Graph Score | Semantic Sim | Candidate Score | Why interesting? |
-|---|---|---|---|---|
-| `Graph Neural Network` + `Drug Discovery` | 0.71 | 0.41 | **0.58** | High centrality, weak co-occurrence |
-| `Deep Learning` + `Healthcare` | 0.65 | 0.55 | **0.61** | Bridge concept, cross-domain |
-| `Natural Language Processing` + `Knowledge Graph` | 0.78 | 0.62 | **0.71** ⭐ | Top-ranked |
-
-#### Strong-edge filter:
-
-Pairs that co-occur in **more than 60% of uploaded papers** are automatically excluded — they are already "known" connections, not novel candidates.
-
-```
-dynamic_threshold = max(3, int(num_papers × 0.6))
-```
-
-| Papers uploaded | Threshold | Meaning |
-|---|---|---|
-| 5 papers | 3 | Pairs in 3+ papers are excluded |
-| 8 papers | 4 | Pairs in 4+ papers are excluded |
-| 10 papers | 6 | Pairs in 6+ papers are excluded |
-
----
-
-### ✅ Step 6 — LLM Evaluation (CREF + GIC)
-
-**File:** `services/llm_service.py`  
-**Model:** Google Gemini (default: `gemini-1.5-flash`)  
-**Requires:** `GEMINI_API_KEY` in your `.env` file
-
-The top 3 candidates from Step 5 are sent to Gemini for evaluation.
-
-#### 6a — CREF Evaluation (Candidate Relationship Evaluation Framework)
-
-Gemini scores each candidate on **4 dimensions** (1–5 scale):
-
-| Dimension | What it means | Example score |
-|---|---|---|
-| `novelty` | How underexplored is this connection *within the uploaded papers*? | 4 |
-| `impact` | How significant could this be for advancing research? | 5 |
-| `plausibility` | How technically feasible and scientifically grounded? | 4 |
-| `interdisciplinarity` | How much does it bridge different research domains? | 5 |
-
-> ⚠️ The LLM uses hedged language — it **never** claims the connection is "globally novel" or "scientifically proven". It evaluates within the context of your uploaded papers only.
-
-**CREF output example:**
 ```json
 {
-  "candidate": "Natural Language Processing + Knowledge Graph",
-  "novelty": 4,
-  "impact": 5,
-  "plausibility": 4,
-  "interdisciplinarity": 5,
-  "reasoning": "This connection bridges symbolic reasoning (KG) with statistical NLP methods. Within the uploaded papers, their integration is mentioned but not deeply explored..."
+  "analysis_id": "analysis_20260827_101522_989206",
+  "created_at": "2026-08-27T10:15:22.989206",
+  "paper_count": 6,
+  "concept_count": 80,
+  "relationship_count": 2324,
+  "analysis_mode": "SE-TGN Temporal Link Prediction (0.50*SE-TGN + 0.30*Graph + 0.20*Semantic)",
+  "temporal_summary": {
+    "total_events": 2347,
+    "unique_concepts": 80,
+    "unique_pairs": 2324,
+    "year_range": "2024–2026"
+  },
+  "candidates": [
+    {
+      "rank": 1,
+      "connection": "Graph Neural Network + Drug Discovery",
+      "concept_a": "Graph Neural Network",
+      "concept_b": "Drug Discovery",
+      "candidate_score": 0.892,
+      "setgn_score": 0.941,
+      "graph_score": 0.812,
+      "semantic_similarity": 0.887
+    }
+  ],
+  "final_result": {
+    "connection": "Graph Neural Network + Drug Discovery",
+    "novelty": 4,
+    "impact": 5,
+    "plausibility": 4,
+    "interdisciplinarity": 5,
+    "research_direction": "Temporal GNN architectures for molecular bioactivity prediction",
+    "hypothesis": "Incorporating temporal positional encodings into molecular graphs enhances affinity prediction."
+  }
 }
 ```
-
-The candidate with the **highest total CREF score** (novelty + impact + plausibility + interdisciplinarity) is selected for insight generation.
-
-#### 6b — GIC (Generated Insight Content)
-
-The top CREF-ranked candidate gets a full research insight generated:
-
-| Field | Description | Example |
-|---|---|---|
-| `research_direction` | One-line summary of the proposed direction | "Integrating KG reasoning into NLP transformers for factual grounding" |
-| `explanation` | Why this connection is interesting based on uploaded papers | "Paper 3 and Paper 5 both hint at..." |
-| `research_questions` | 3 specific questions to explore | "How can KG triples be encoded as attention priors?" |
-| `hypothesis` | A testable hypothesis | "KG-augmented transformers will outperform vanilla transformers on fact-intensive QA" |
-| `limitations` | What to be careful about | "Based only on uploaded papers; no global novelty claim is made." |
-| `supporting_papers` | Which uploaded papers support this | `["paper_003", "paper_005"]` |
-
----
-
-### ✅ Step 7 — History Save
-
-**File:** `services/history_service.py`
-
-Every analysis is saved automatically to:
-```
-research_discovery/data/history/analysis_YYYYMMDD_HHMMSS.json
-```
-
-> ⚠️ `full_text` is **never saved** to disk — only metadata, concepts, scores, and insights.
-
----
-
-## 📁 Module Reference Table
-
-| File | Role | Key function |
-|---|---|---|
-| `app.py` | Streamlit UI — all pages | Main entry point |
-| `services/pdf_processor.py` | PDF → paper dict | `process_pdfs()` |
-| `services/concept_extractor.py` | Text → concept list | `extract_all_concepts()` |
-| `services/embeddings.py` | Concepts → 384-dim vectors | `embed_concepts()` |
-| `services/graph_builder.py` | Papers → NetworkX graph | `build_graph()` |
-| `services/graph_analyzer.py` | Graph → scored candidates | `rank_candidates()` |
-| `services/gnn_model.py` | Optional GCN encoder | `compute_gnn_scores()` |
-| `services/llm_service.py` | Gemini CREF + GIC | `evaluate_candidate()`, `generate_insight()` |
-| `services/analysis_pipeline.py` | Orchestrates all steps | `run_pipeline()` |
-| `services/history_service.py` | Save/load JSON history | `save_analysis()` |
-| `utils/text_utils.py` | Stopwords, synonym map, regex | `extract_noun_phrases()` |
-| `utils/json_utils.py` | Safe JSON parsing | `extract_json_from_llm_response()` |
-
----
-
-## 🔄 End-to-End Worked Example
-
-**Scenario:** You upload 6 papers on AI in healthcare.
-
----
-
-**Step 1 — PDF Extraction:**
-```
-paper_001: "GNN for Drug Discovery"        (2023)
-paper_002: "Transformer Models in NLP"     (2022)
-paper_003: "Knowledge Graphs in Medicine"  (2024)
-paper_004: "Deep Learning for Diagnosis"   (2023)
-paper_005: "NLP for Clinical Notes"        (2024)
-paper_006: "Graph Attention Networks"      (2023)
-```
-
----
-
-**Step 2 — Concept Extraction:**
-```
-231 raw concepts extracted
-→ 80 canonical concepts kept after filtering
-
-Sample: [
-  "Graph Neural Network", "Drug Discovery", "Knowledge Graph",
-  "Natural Language Processing", "Clinical Notes", "Deep Learning",
-  "Attention Mechanism", "Healthcare", "Diagnosis", "Drug Target"
-]
-```
-
----
-
-**Step 3 — Embeddings:**
-```
-80 concepts × 384 dimensions = 80 vectors computed
-Semantic similarity (Knowledge Graph ↔ Graph Neural Network) = 0.76
-Semantic similarity (Clinical Notes ↔ Drug Discovery) = 0.38
-```
-
----
-
-**Step 4 — Knowledge Graph:**
-```
-Nodes: 80
-Edges: 1,422 co-occurrence edges
-```
-
----
-
-**Step 5 — Top 3 Candidates after scoring:**
-
-| Rank | Connection | Graph Score | Semantic Sim | Candidate Score |
-|---|---|---|---|---|
-| 🥇 1 | `Knowledge Graph + Clinical Notes` | 0.79 | 0.61 | **0.72** |
-| 🥈 2 | `Graph Neural Network + Clinical Notes` | 0.74 | 0.58 | **0.67** |
-| 🥉 3 | `Drug Discovery + Attention Mechanism` | 0.68 | 0.55 | **0.62** |
-
----
-
-**Step 6 — CREF Scores from Gemini:**
-
-| Connection | Novelty | Impact | Plausibility | Interdisciplinarity | Total |
-|---|---|---|---|---|---|
-| `Knowledge Graph + Clinical Notes` | 4 | 5 | 4 | 5 | **18** ⭐ |
-| `GNN + Clinical Notes` | 3 | 4 | 4 | 4 | 15 |
-| `Drug Discovery + Attention` | 4 | 4 | 3 | 4 | 15 |
-
----
-
-**Step 6b — GIC Final Output (for top candidate):**
-
-```
-Research Direction:
-  "Leveraging Knowledge Graphs to structure and query unstructured clinical notes
-   for improved diagnostic inference"
-
-Research Questions:
-  1. Can KG-structured clinical notes improve rare disease diagnosis accuracy?
-  2. How should medical ontologies (SNOMED, ICD) be integrated into the KG?
-  3. What graph traversal strategies best surface relevant patient history?
-
-Hypothesis:
-  KG-augmented NLP models processing clinical notes will demonstrate
-  higher factual consistency than vanilla LLM-based approaches on
-  clinical QA benchmarks.
-
-Supporting Papers: paper_003, paper_005
-
-Limitations:
-  Based on 6 uploaded papers. No claim of global scientific novelty is made.
-  Results require validation by domain experts before any clinical application.
-```
-
----
-
-## ⚖️ What the System Does vs. What It Doesn't Do
-
-| ✅ What it DOES | ❌ What it DOES NOT do |
-|---|---|
-| Identifies interesting concept pairs within your uploaded papers | Prove that a connection is globally novel |
-| Scores candidates using interpretable graph metrics | Replace peer review or expert validation |
-| Uses Gemini to generate plausible research directions | Guarantee the generated hypothesis is correct |
-| Saves a history of every analysis run | Access the internet or external paper databases |
-| Works without the Gemini API key (graph-only mode) | Work on scanned/image PDFs without text layers |
-
----
-
-## 🔗 Key Dependencies
-
-| Package | Version | Purpose |
-|---|---|---|
-| `streamlit` | ≥ 1.35 | Web UI |
-| `PyMuPDF` | ≥ 1.24 | PDF text extraction |
-| `sentence-transformers` | ≥ 3.0 | `all-MiniLM-L6-v2` embeddings |
-| `networkx` | ≥ 3.3 | Graph construction & centrality |
-| `plotly` | ≥ 5.22 | Interactive graph visualization |
-| `google-genai` | ≥ 1.0 | Gemini API client |
-| `numpy`, `pandas` | ≥ 1.26, ≥ 2.2 | Numerical operations |
-| `python-dotenv` | ≥ 1.0 | `.env` file loading |
-| `torch` + `torch-geometric` | Optional | GNN encoder (adds ~1.5 GB) |

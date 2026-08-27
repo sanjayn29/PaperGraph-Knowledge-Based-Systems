@@ -12,10 +12,12 @@ Output per paper follows the PaperGraph paper schema:
     "filename": "paper1.pdf",
     "title": "...",
     "abstract": "...",
-    "year": 2024,
+    "year": 2024,             ← int or None
+    "year_source": "metadata",← 'metadata'|'text_regex'|'estimated'|'manual'
+    "year_estimated": False,  ← True if year is not reliably known
     "authors": [...],
     "full_text": "...",
-    "concepts": []        ← populated later by concept_extractor
+    "concepts": []            ← populated later by concept_extractor
 }
 """
 
@@ -70,15 +72,18 @@ def process_pdf(
     file_bytes: bytes,
     filename: str,
     paper_index: int,
+    year_override: Optional[int] = None,
 ) -> dict:
     """
     Extract structured data from a single PDF.
 
     Parameters
     ----------
-    file_bytes : bytes   — raw bytes of the PDF file
-    filename   : str     — original filename (used as title fallback)
-    paper_index: int     — 0-based index, used to generate paper_id
+    file_bytes    : bytes         — raw bytes of the PDF file
+    filename      : str           — original filename (used as title fallback)
+    paper_index   : int           — 0-based index, used to generate paper_id
+    year_override : Optional[int] — if provided, use this year instead of
+                                    auto-detected value (manual user correction)
 
     Returns
     -------
@@ -93,6 +98,8 @@ def process_pdf(
         "title": "",
         "abstract": "",
         "year": None,
+        "year_source": "estimated",
+        "year_estimated": True,
         "authors": [],
         "full_text": "",
         "concepts": [],
@@ -144,8 +151,16 @@ def process_pdf(
         # Authors
         base["authors"] = _extract_authors(meta, full_text)
 
-        # Year
-        base["year"] = _extract_year(meta, full_text)
+        # Year (with source tracking)
+        if year_override is not None:
+            base["year"] = int(year_override)
+            base["year_source"] = "manual"
+            base["year_estimated"] = False
+        else:
+            year, source = _extract_year_with_source(meta, full_text)
+            base["year"] = year
+            base["year_source"] = source
+            base["year_estimated"] = (source == "estimated" or year is None)
 
         # Abstract
         base["abstract"] = _extract_abstract(full_text)
@@ -171,9 +186,15 @@ def process_pdf(
 
 def process_pdfs(
     uploaded_files: list,
+    year_overrides: Optional[dict[str, int]] = None,
 ) -> tuple[list[dict], list[str]]:
     """
     Process a list of Streamlit UploadedFile objects.
+
+    Parameters
+    ----------
+    uploaded_files : list of Streamlit UploadedFile objects
+    year_overrides : optional {filename → year} mapping for manual year correction
 
     Returns
     -------
@@ -192,7 +213,9 @@ def process_pdfs(
                 warnings.append(f"⚠️ '{filename}' appears to be empty and was skipped.")
                 continue
 
-            paper = process_pdf(file_bytes, filename, len(papers))
+            # Check for manual year overrides (passed as {filename: year} dict)
+            year_ov = year_overrides.get(filename) if year_overrides else None
+            paper = process_pdf(file_bytes, filename, len(papers), year_override=year_ov)
 
             if "parse_error" in paper:
                 warnings.append(
@@ -200,6 +223,13 @@ def process_pdfs(
                     "This file will be excluded from analysis."
                 )
             else:
+                # Warn about estimated years
+                if paper.get("year_estimated") or paper.get("year") is None:
+                    warnings.append(
+                        f"📅 '{filename}': publication year could not be reliably extracted "
+                        f"(source: {paper.get('year_source', 'unknown')}). "
+                        "A fallback year will be assigned. You can correct it in Paper Metadata."
+                    )
                 papers.append(paper)
 
         except Exception as exc:
@@ -209,6 +239,31 @@ def process_pdfs(
             )
 
     return papers, warnings
+
+
+def peek_pdf_year(file_bytes: bytes, filename: str = "") -> tuple[Optional[int], str]:
+    """
+    Quickly detect the publication year of a PDF from its metadata or first page text.
+    Used by the UI to pre-populate the year editor with the detected year.
+
+    Returns
+    -------
+    (year, source) e.g. (2021, 'metadata') or (2023, 'text_regex') or (None, 'estimated')
+    """
+    if not FITZ_AVAILABLE or not file_bytes:
+        return None, "estimated"
+
+    try:
+        doc = fitz.open(stream=file_bytes, filetype="pdf")
+        meta = doc.metadata or {}
+        first_page_text = ""
+        if len(doc) > 0:
+            first_page_text = doc[0].get_text("text") or ""
+        return _extract_year_with_source(meta, first_page_text)
+    except Exception as exc:
+        logger.debug("Failed to peek year in %s: %s", filename, exc)
+        return None, "estimated"
+
 
 
 # ─────────────────────────────────────────────────────────────
@@ -270,13 +325,32 @@ def _extract_year(meta: dict, full_text: str) -> Optional[int]:
     """
     Try fitz metadata dates, then regex scan of the full text.
     Returns an int year or None.
+
+    Deprecated: use _extract_year_with_source() for richer output.
+    """
+    year, _ = _extract_year_with_source(meta, full_text)
+    return year
+
+
+def _extract_year_with_source(
+    meta: dict, full_text: str
+) -> tuple[Optional[int], str]:
+    """
+    Try fitz metadata dates, then regex scan of the full text.
+
+    Returns
+    -------
+    (year, source) where source is one of:
+        'metadata'   — extracted from PDF metadata date field
+        'text_regex' — extracted from year pattern in first 2000 chars of text
+        'estimated'  — could not determine; year is None
     """
     # 1. Metadata dates (format: D:YYYYMMDDHHmmSS)
     for field in ("creationDate", "modDate"):
         raw = (meta.get(field) or "").strip()
         if raw.startswith("D:") and len(raw) >= 6:
             try:
-                return int(raw[2:6])
+                return int(raw[2:6]), "metadata"
             except ValueError:
                 pass
 
@@ -284,13 +358,11 @@ def _extract_year(meta: dict, full_text: str) -> Optional[int]:
     snippet = full_text[:2000]
     years = _YEAR_RE.findall(snippet)
     if years:
-        # Return the most frequently occurring year (likely the publication year)
         from collections import Counter
-
         year_counts = Counter(int(y) for y in years)
-        return year_counts.most_common(1)[0][0]
+        return year_counts.most_common(1)[0][0], "text_regex"
 
-    return None
+    return None, "estimated"
 
 
 def _extract_abstract(full_text: str) -> str:

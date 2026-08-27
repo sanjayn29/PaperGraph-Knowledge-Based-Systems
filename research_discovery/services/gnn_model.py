@@ -217,11 +217,30 @@ def _run_gcn(
 
 def gnn_status_label(G: Optional[nx.Graph] = None) -> str:
     """
-    Return a human-readable label for the current GNN component status.
+    Return a human-readable label for the current GNN (GCN baseline) status.
     Used by the UI to label the analysis mode.
     """
     if not GNN_AVAILABLE:
-        return "Lightweight Graph Analysis (GNN inactive — PyTorch/PyG not installed)"
+        return "Lightweight Graph Analysis (GCN inactive — PyTorch/PyG not installed)"
     if G is not None and G.number_of_nodes() < MIN_NODES_FOR_GNN:
-        return f"Lightweight Graph Analysis (GNN inactive — graph too small: {G.number_of_nodes()} nodes < {MIN_NODES_FOR_GNN})"
+        return f"Lightweight Graph Analysis (GCN inactive — graph too small: {G.number_of_nodes()} nodes < {MIN_NODES_FOR_GNN})"
     return "Lightweight GNN-based Graph Analysis"
+
+
+# ─────────────────────────────────────────────────────────────
+# SE-TGN availability (for sidebar status badge in app.py)
+# ─────────────────────────────────────────────────────────────
+
+try:
+    from services.se_tgn import SETGN_AVAILABLE, setgn_status_label as _setgn_label
+except ImportError:
+    SETGN_AVAILABLE = False
+
+    def _setgn_label(n_events: int = 0) -> str:
+        return "SE-TGN inactive (se_tgn.py not found)"
+
+
+def se_tgn_status_label(n_events: int = 0) -> str:
+    """Return a human-readable status string for the SE-TGN component."""
+    return _setgn_label(n_events)
+
