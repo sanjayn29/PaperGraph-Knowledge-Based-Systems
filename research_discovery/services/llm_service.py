@@ -199,25 +199,40 @@ class LLMService:
 
         combined_prompt = f"{system_prompt}\n\n{user_prompt}"
 
-        for attempt in range(max_retries + 1):
-            try:
-                response = self._client.models.generate_content(  # type: ignore[union-attr]
-                    model=self.model_name,
-                    contents=combined_prompt,
-                    config={
-                        "automatic_function_calling": {"disable": True},
-                    },
-                )
-                return response.text
-            except Exception as exc:
-                logger.warning(
-                    "LLM call failed (attempt %d/%d): %s",
-                    attempt + 1,
-                    max_retries + 1,
-                    exc,
-                )
-                if attempt < max_retries:
-                    time.sleep(retry_delay)
+        # Model cascade to survive per-model free tier quota limits
+        model_candidates = [self.model_name]
+        for fallback in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.6-flash"]:
+            if fallback not in model_candidates:
+                model_candidates.append(fallback)
+
+        for model_to_try in model_candidates:
+            for attempt in range(max_retries + 1):
+                try:
+                    response = self._client.models.generate_content(  # type: ignore[union-attr]
+                        model=model_to_try,
+                        contents=combined_prompt,
+                        config={
+                            "automatic_function_calling": {"disable": True},
+                        },
+                    )
+                    return response.text
+                except Exception as exc:
+                    exc_str = str(exc)
+                    if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
+                        logger.warning(
+                            "Model %s hit quota limit (429). Trying fallback model...",
+                            model_to_try,
+                        )
+                        break  # Break retry loop to immediately try next model candidate
+                    logger.warning(
+                        "LLM call failed for %s (attempt %d/%d): %s",
+                        model_to_try,
+                        attempt + 1,
+                        max_retries + 1,
+                        exc,
+                    )
+                    if attempt < max_retries:
+                        time.sleep(retry_delay)
 
         return None
 

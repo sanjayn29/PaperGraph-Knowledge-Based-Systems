@@ -336,31 +336,63 @@ def _extract_year_with_source(
     meta: dict, full_text: str
 ) -> tuple[Optional[int], str]:
     """
-    Try fitz metadata dates, then regex scan of the full text.
+    Extract publication year prioritizing explicit citation headers, publication notices,
+    and text patterns over PDF file creation timestamps.
 
     Returns
     -------
     (year, source) where source is one of:
-        'metadata'   — extracted from PDF metadata date field
-        'text_regex' — extracted from year pattern in first 2000 chars of text
-        'estimated'  — could not determine; year is None
+        'citation_header' — explicit copyright, conference, or publication header
+        'arxiv_id'        — extracted from arXiv identifier (e.g. arXiv:1706.03762 -> 2017)
+        'text_regex'      — extracted from year pattern in first 3000 chars of text
+        'metadata'        — extracted from PDF creation/mod metadata date field
+        'estimated'       — could not determine; year is None
     """
-    # 1. Metadata dates (format: D:YYYYMMDDHHmmSS)
+    snippet = full_text[:3500] if full_text else ""
+
+    # 1. Explicit publication / copyright / conference patterns
+    pub_match = re.search(
+        r"(?i)(?:published|proceedings|conference|journal|copyright|©|acm|ieee|elsevier|springer|accepted|appeared in)[\s\w,.:-]{0,50}\b(19[89]\d|20[012]\d)\b",
+        snippet,
+    )
+    if pub_match:
+        try:
+            yr = int(pub_match.group(1))
+            if 1980 <= yr <= 2030:
+                return yr, "citation_header"
+        except (ValueError, IndexError):
+            pass
+
+    # 2. arXiv identifier pattern (e.g., arXiv:1706.03762 -> 2017, arXiv:2104.12345 -> 2021)
+    arxiv_match = re.search(r"(?i)arxiv:(\d{2})\d{2}\.\d+", snippet)
+    if arxiv_match:
+        try:
+            yy = int(arxiv_match.group(1))
+            yr = 2000 + yy if yy < 50 else 1900 + yy
+            if 1990 <= yr <= 2030:
+                return yr, "arxiv_id"
+        except (ValueError, IndexError):
+            pass
+
+    # 3. Frequency of 4-digit years in the first 2500 characters
+    years = _YEAR_RE.findall(snippet[:2500])
+    if years:
+        from collections import Counter
+        year_counts = Counter(int(y) for y in years)
+        most_common_yr, count = year_counts.most_common(1)[0]
+        if count >= 1:
+            return most_common_yr, "text_regex"
+
+    # 4. Metadata dates (format: D:YYYYMMDDHHmmSS)
     for field in ("creationDate", "modDate"):
         raw = (meta.get(field) or "").strip()
         if raw.startswith("D:") and len(raw) >= 6:
             try:
-                return int(raw[2:6]), "metadata"
+                yr = int(raw[2:6])
+                if 1980 <= yr <= 2030:
+                    return yr, "metadata"
             except ValueError:
                 pass
-
-    # 2. Regex in first 2000 chars (where citation/copyright usually appears)
-    snippet = full_text[:2000]
-    years = _YEAR_RE.findall(snippet)
-    if years:
-        from collections import Counter
-        year_counts = Counter(int(y) for y in years)
-        return year_counts.most_common(1)[0][0], "text_regex"
 
     return None, "estimated"
 

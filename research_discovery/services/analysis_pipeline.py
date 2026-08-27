@@ -257,6 +257,87 @@ def run_pipeline(
             )
             return result
 
+        # ── Step 9a: Scientific Domain Classification ─────────────
+        from services.domain_analyzer import classify_all_concepts, extract_cross_domain_discoveries
+        concept_domains = classify_all_concepts(all_concepts, concept_embeddings)
+        result["concept_domains"] = concept_domains
+
+        # ── Step 9b: Research Gap Detection ──────────────────────
+        from services.research_gap_detector import detect_research_gaps
+        research_gaps = detect_research_gaps(
+            candidates=candidates,
+            G=G,
+            temporal_graph=temporal_graph,
+            concept_domains=concept_domains,
+            papers=papers,
+            min_gap_score=0.45,
+            top_k=15,
+        )
+        result["research_gaps"] = research_gaps
+
+        # ── Step 9c: Cross-Domain Discoveries ────────────────────
+        cross_domain_discoveries = extract_cross_domain_discoveries(
+            candidates=candidates,
+            concept_domains=concept_domains,
+            min_cross_domain_score=0.40,
+            top_k=12,
+        )
+        result["cross_domain_discoveries"] = cross_domain_discoveries
+
+        # ── Step 9d: Evidence & Provenance Compilation ───────────
+        from services.provenance import compile_all_provenance
+        provenance_map = compile_all_provenance(
+            candidates=candidates,
+            G=G,
+            papers=papers,
+            temporal_graph=temporal_graph,
+            research_gaps=research_gaps,
+        )
+        result["provenance"] = provenance_map
+
+        # ── Step 9e: Human-in-the-Loop Personalized Ranking ───────
+        from services.user_feedback import compute_personalized_rankings
+        personalized_candidates = compute_personalized_rankings(
+            candidates=candidates,
+            concept_domains=concept_domains,
+            concept_embeddings=concept_embeddings,
+        )
+        result["personalized_candidates"] = personalized_candidates
+
+        # Enrich candidates into unified discovery format
+        gap_score_lookup = {
+            f"{g['concept_a']} + {g['concept_b']}": g for g in research_gaps
+        }
+        for idx, cand in enumerate(candidates, 1):
+            cand["rank"] = cand.get("rank", idx)
+            cand_id = f"cand_{cand['rank']:03d}"
+            cand["candidate_id"] = cand_id
+            ca, cb = cand["concept_a"], cand["concept_b"]
+            cand_key = f"{ca} + {cb}"
+
+            cand["base_scores"] = {
+                "setgn": cand.get("setgn_score"),
+                "graph": cand.get("graph_score", 0.0),
+                "semantic": cand.get("semantic_similarity", 0.0),
+            }
+
+            matched_gap = gap_score_lookup.get(cand_key) or gap_score_lookup.get(f"{cb} + {ca}")
+            if matched_gap:
+                cand["research_gap"] = {
+                    "score": matched_gap.get("gap_score", 0.0),
+                    "status": matched_gap.get("status", "underexplored"),
+                    "explanation": matched_gap.get("explanation", ""),
+                }
+            else:
+                cand["research_gap"] = {"score": 0.50, "status": "standard", "explanation": ""}
+
+            cand["cross_domain"] = {
+                "domain_a": concept_domains.get(ca, {}).get("domain", "General"),
+                "domain_b": concept_domains.get(cb, {}).get("domain", "General"),
+            }
+
+            cand["evidence"] = provenance_map.get(cand_key, {})
+
         result["candidates"] = candidates
 
         # ── Step 10 & 11: LLM CREF + GIC ─────────────────────────

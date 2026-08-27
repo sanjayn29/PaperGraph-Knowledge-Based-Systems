@@ -738,9 +738,13 @@ def _render_result(result: dict):
     )
 
     # ── Tabs ─────────────────────────────────────────────────
-    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
         "💡 Top Insight",
-        "📊 Candidates",
+        "🎯 Predictions & Feedback",
+        "🔎 Research Gaps",
+        "🌉 Cross-Domain",
+        "📚 Evidence & Provenance",
+        "💬 Research Assistant",
         "🕸️ Graph View",
         "⏱️ Temporal Graph",
         "📈 Model Evaluation",
@@ -750,6 +754,11 @@ def _render_result(result: dict):
     final = result.get("final_result", {})
     candidates = result.get("candidates", [])
     papers = result.get("papers", [])
+    research_gaps = result.get("research_gaps", [])
+    cross_domain_discoveries = result.get("cross_domain_discoveries", [])
+    concept_domains = result.get("concept_domains", {})
+    provenance_map = result.get("provenance", {})
+    personalized_candidates = result.get("personalized_candidates", candidates)
 
     # ── Tab 1: Top Insight ────────────────────────────────────
     with tab1:
@@ -758,24 +767,45 @@ def _render_result(result: dict):
         else:
             _render_insight(final, llm_active)
 
-    # ── Tab 2: Candidates ────────────────────────────────────
+    # ── Tab 2: Predictions & Feedback ─────────────────────────
     with tab2:
-        _render_candidates(candidates, result.get("analysis_mode", ""))
+        _render_candidates_and_personalization(
+            candidates=candidates,
+            personalized_candidates=personalized_candidates,
+            mode=result.get("analysis_mode", ""),
+            concept_domains=concept_domains,
+        )
 
-    # ── Tab 3: Graph View ─────────────────────────────────────
+    # ── Tab 3: Research Gaps ──────────────────────────────────
     with tab3:
+        _render_research_gaps(research_gaps)
+
+    # ── Tab 4: Cross-Domain Discoveries ───────────────────────
+    with tab4:
+        _render_cross_domain(cross_domain_discoveries, concept_domains)
+
+    # ── Tab 5: Evidence & Provenance ──────────────────────────
+    with tab5:
+        _render_provenance(provenance_map, candidates)
+
+    # ── Tab 6: Research Assistant ─────────────────────────────
+    with tab6:
+        _render_research_assistant(result)
+
+    # ── Tab 7: Graph View ─────────────────────────────────────
+    with tab7:
         _render_graph_viz(result, candidates)
 
-    # ── Tab 4: Temporal Graph ─────────────────────────────────
-    with tab4:
+    # ── Tab 8: Temporal Graph ─────────────────────────────────
+    with tab8:
         _render_temporal_graph(result)
 
-    # ── Tab 5: Model Evaluation ───────────────────────────────
-    with tab5:
+    # ── Tab 9: Model Evaluation ───────────────────────────────
+    with tab9:
         _render_evaluation(result)
 
-    # ── Tab 6: Papers ─────────────────────────────────────────
-    with tab6:
+    # ── Tab 10: Papers ────────────────────────────────────────
+    with tab10:
         _render_papers(papers)
 
     # ── Technical Details expander ───────────────────────────
@@ -795,8 +825,8 @@ def _render_insight(final: dict, llm_active: bool):
                 {connection}
             </div>
             <div style='font-size:0.8rem; color:#6e7681;'>
-                Candidate research direction identified through graph co-occurrence analysis
-                {"and LLM evaluation" if llm_active else "(LLM evaluation not available)"}
+                Candidate research direction identified through SE-TGN temporal link prediction
+                {"and CREF/GIC LLM evaluation" if llm_active else "(LLM evaluation not available)"}
             </div>
         </div>
         """,
@@ -877,7 +907,7 @@ def _render_insight(final: dict, llm_active: bool):
     st.markdown(
         """
         <div class='disclaimer-box'>
-            ⚠️ <strong>Disclaimer:</strong> This system identifies potentially interesting
+            ⚠️ <strong>Academic Disclaimer:</strong> This system identifies potentially interesting
             relationships within the uploaded research papers. It does not prove that a relationship
             is scientifically novel or that the generated research direction is experimentally validated.
         </div>
@@ -886,50 +916,383 @@ def _render_insight(final: dict, llm_active: bool):
     )
 
 
-def _render_candidates(candidates: list, mode: str):
-    """Render the ranked candidate list."""
-    if not candidates:
-        st.info("No candidates generated.")
-        return
+def _render_candidates_and_personalization(
+    candidates: list,
+    personalized_candidates: list,
+    mode: str,
+    concept_domains: dict,
+):
+    """Render candidate connections with interactive Human-in-the-Loop feedback and personalized reranking."""
+    from services.user_feedback import record_feedback, get_user_profile_summary
 
-    st.markdown(f"**{len(candidates)} candidate connections ranked by score**")
+    st.markdown("### 🎯 Candidate Concept Connections & Personalization")
     st.markdown(
-        f"<div style='font-size:0.78rem; color:#6e7681; margin-bottom:1rem;'>Analysis mode: {mode}</div>",
+        f"<div style='font-size:0.82rem; color:#8b949e; margin-bottom:1rem;'>Analysis Mode: <code>{mode}</code></div>",
         unsafe_allow_html=True,
     )
 
-    for i, cand in enumerate(candidates[:10]):
-        score = cand.get("candidate_score", 0)
-        graph_score = cand.get("graph_score", 0)
-        sem_score = cand.get("semantic_similarity", 0)
-        gnn_score = cand.get("gnn_score")
+    ranking_view = st.radio(
+        "Select Ranking View:",
+        ["Original Ranking (Base SE-TGN Model)", "Personalized Ranking (Human-in-the-Loop)"],
+        horizontal=True,
+        key="ranking_view_toggle",
+    )
+
+    active_list = personalized_candidates if "Personalized" in ranking_view else candidates
+
+    if not active_list:
+        st.info("No candidate connections generated.")
+        return
+
+    # Profile summary metrics
+    stats = get_user_profile_summary()
+    if stats["total_feedbacks"] > 0 and "Personalized" in ranking_view:
+        st.info(
+            f"🧠 **Personalized Layer Active:** {stats['total_feedbacks']} ratings recorded. "
+            f"Boosted concepts: {', '.join(list(stats['preferred_concepts'].keys())[:3]) or 'None'}"
+        )
+
+    for i, cand in enumerate(active_list[:12]):
+        cand_id = cand.get("candidate_id", f"cand_{i+1:03d}")
+        ca = cand.get("concept_a", "")
+        cb = cand.get("concept_b", "")
+        score = cand.get("personalized_score", cand.get("candidate_score", 0))
+        orig_score = cand.get("candidate_score", 0)
         setgn_score = cand.get("setgn_score")
-        gnn_active = cand.get("gnn_active", False)
-        setgn_active_flag = cand.get("setgn_active", False)
-        pred_time = cand.get("prediction_time")
+        sem_score = cand.get("semantic_similarity", 0)
+        graph_score = cand.get("graph_score", 0)
+        orig_rank = cand.get("original_rank", i + 1)
+        pers_rank = cand.get("personalized_rank", i + 1)
+        rank_delta = cand.get("rank_delta", 0)
 
-        score_color = "#3fb950" if score >= 0.7 else ("#f0883e" if score >= 0.4 else "#8b949e")
+        dom_a = concept_domains.get(ca, {}).get("domain", "")
+        dom_b = concept_domains.get(cb, {}).get("domain", "")
 
-        gnn_str = f" · GCN: {gnn_score:.3f}" if gnn_active and gnn_score is not None else ""
-        setgn_str = f" · SE-TGN: {setgn_score:.3f}" if setgn_active_flag and setgn_score is not None else ""
-        pred_str = f" · Predicts for {pred_time}" if pred_time else ""
+        delta_badge = ""
+        if "Personalized" in ranking_view and rank_delta != 0:
+            if rank_delta > 0:
+                delta_badge = f"<span style='color:#3fb950; font-weight:700;'>▲ +{rank_delta} (Orig #{orig_rank})</span>"
+            else:
+                delta_badge = f"<span style='color:#f85149; font-weight:700;'>▼ {rank_delta} (Orig #{orig_rank})</span>"
 
         st.markdown(
             f"""
-            <div class='candidate-card {"selected" if i == 0 else ""}'>
-                <div class='candidate-connection'>
-                    {"🥇" if i==0 else "🥈" if i==1 else "🥉" if i==2 else f"#{i+1}"}&nbsp;
-                    {cand.get('connection', 'Unknown')}
+            <div class='candidate-card {"selected" if i==0 else ""}'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <div class='candidate-connection'>
+                        {"🥇" if i==0 else "🥈" if i==1 else "🥉" if i==2 else f"#{i+1}"}&nbsp;
+                        {cand.get('connection', f'{ca} + {cb}')}
+                        &nbsp;&nbsp;{delta_badge}
+                    </div>
+                    <div style='font-size:0.8rem; color:#8b949e;'>
+                        <span style='background:#21262d; padding:2px 8px; border-radius:12px; border:1px solid #30363d;'>{dom_a} ↔ {dom_b}</span>
+                    </div>
                 </div>
-                <div class='candidate-score'>
-                    Score: <strong style='color:{score_color};'>{score:.3f}</strong>
+                <div class='candidate-score' style='margin-top:0.35rem;'>
+                    Score: <strong style='color:#58a6ff;'>{score:.3f}</strong>
+                    {" (Orig: " + f"{orig_score:.3f})" if 'Personalized' in ranking_view else ""}
+                    &nbsp;·&nbsp; SE-TGN: {f"{setgn_score:.3f}" if setgn_score is not None else "N/A"}
+                    &nbsp;·&nbsp; Semantic: {sem_score:.3f}
                     &nbsp;·&nbsp; Graph: {graph_score:.3f}
-                    &nbsp;·&nbsp; Semantic: {sem_score:.3f}{setgn_str}{gnn_str}{pred_str}
                 </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
+
+        # Human feedback rating buttons
+        c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
+        with c1:
+            if st.button("👍 Useful", key=f"fb_int_{i}_{cand_id}"):
+                record_feedback(cand_id, ca, cb, "interesting", dom_a, dom_b)
+                st.success("Feedback recorded! Rerank will reflect this.")
+                st.rerun()
+        with c2:
+            if st.button("⭐ High Value", key=f"fb_star_{i}_{cand_id}"):
+                record_feedback(cand_id, ca, cb, "highly_relevant", dom_a, dom_b)
+                st.success("Marked as High Value!")
+                st.rerun()
+        with c3:
+            if st.button("👎 Irrelevant", key=f"fb_not_{i}_{cand_id}"):
+                record_feedback(cand_id, ca, cb, "not_relevant", dom_a, dom_b)
+                st.info("Downvoted candidate.")
+                st.rerun()
+        with c4:
+            if st.button("🔖 Save", key=f"fb_save_{i}_{cand_id}"):
+                record_feedback(cand_id, ca, cb, "saved", dom_a, dom_b)
+                st.success("Saved to favorites.")
+                st.rerun()
+        with c5:
+            if cand.get("personalization_reason"):
+                st.caption(f"💡 {cand['personalization_reason']}")
+
+
+def _render_research_gaps(research_gaps: list):
+    """Render detected research gaps with metric breakdowns and rationales."""
+    st.markdown("### 🔎 Detected Scientific Research Gaps")
+    st.markdown(
+        """
+        <div style='font-size:0.85rem; color:#8b949e; margin-bottom:1.2rem;'>
+            Identifies concept pairs with strong semantic compatibility and high individual importance,
+            yet minimal direct co-occurrence in the current corpus.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not research_gaps:
+        st.info("No prominent research gaps detected above the significance threshold.")
+        return
+
+    # Metric summaries
+    g1, g2, g3 = st.columns(3)
+    with g1:
+        st.metric("Total Gaps Detected", len(research_gaps))
+    with g2:
+        avg_score = sum(g.get("gap_score", 0) for g in research_gaps) / len(research_gaps)
+        st.metric("Avg Gap Score", f"{avg_score:.2f}")
+    with g3:
+        high_prom = sum(1 for g in research_gaps if g.get("status") == "highly_promising")
+        st.metric("High-Potential Gaps", high_prom)
+
+    st.markdown("---")
+
+    for i, gap in enumerate(research_gaps[:10]):
+        gap_score = gap.get("gap_score", 0.0)
+        score_color = "#3fb950" if gap_score >= 0.75 else "#58a6ff"
+        status_badge = (
+            "<span style='background:rgba(63,185,80,0.15); color:#3fb950; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(63,185,80,0.3);'>⭐ Highly Promising</span>"
+            if gap.get("status") == "highly_promising"
+            else "<span style='background:rgba(88,166,255,0.15); color:#58a6ff; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(88,166,255,0.3);'>Underexplored</span>"
+        )
+
+        with st.expander(
+            f"#{i+1} {gap.get('concept_a')} ↔ {gap.get('concept_b')} (Gap Score: {gap_score:.2f})",
+            expanded=(i == 0),
+        ):
+            st.markdown(
+                f"""
+                <div style='margin-bottom:0.75rem;'>
+                    {status_badge}
+                    &nbsp;&nbsp;<strong>Domains:</strong> {gap.get('domain_a')} ↔ {gap.get('domain_b')}
+                    &nbsp;&nbsp;|&nbsp;&nbsp;<strong>Existing Connections:</strong> {gap.get('existing_connections', 0)}
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            st.markdown(f"**Rationale:** {gap.get('explanation', '')}")
+
+            # Component score breakdown
+            st.markdown("##### Gap Metric Composition")
+            c1, c2, c3, c4, c5 = st.columns(5)
+            c1.metric("Semantic (30%)", f"{gap.get('semantic_score', 0):.2f}")
+            c2.metric("Temporal (25%)", f"{gap.get('temporal_score', 0):.2f}")
+            c3.metric("Structural (20%)", f"{gap.get('structural_score', 0):.2f}")
+            c4.metric("Cross-Domain (15%)", f"{gap.get('cross_domain_score', 0):.2f}")
+            c5.metric("Novelty (10%)", f"{gap.get('novelty_score', 0):.2f}")
+
+            if gap.get("supporting_papers"):
+                st.markdown("##### Contextual Papers in Corpus")
+                for p in gap["supporting_papers"]:
+                    st.markdown(f"- **{p.get('title', 'Untitled')}** ({p.get('year', 'N/A')}) — *mentions {', '.join(p.get('contains', []))}*")
+
+
+def _render_cross_domain(cross_domain_discoveries: list, concept_domains: dict):
+    """Render interdisciplinary cross-domain discoveries."""
+    st.markdown("### 🌉 Cross-Domain Discoveries")
+    st.markdown(
+        """
+        <div style='font-size:0.85rem; color:#8b949e; margin-bottom:1.2rem;'>
+            Highlights emergent synergies bridging different scientific disciplines.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not cross_domain_discoveries:
+        st.info("No strong cross-domain discoveries identified in this paper collection.")
+        return
+
+    # Filter by domain pair
+    available_pairs = sorted(list(set(
+        f"{cd['domain_a']} ↔ {cd['domain_b']}" for cd in cross_domain_discoveries
+    )))
+    selected_pair = st.selectbox(
+        "Filter by Discipline Bridge:",
+        ["All Domains"] + available_pairs,
+        key="cross_domain_filter_select",
+    )
+
+    filtered = cross_domain_discoveries
+    if selected_pair != "All Domains":
+        filtered = [
+            cd for cd in cross_domain_discoveries
+            if f"{cd['domain_a']} ↔ {cd['domain_b']}" == selected_pair
+        ]
+
+    for cd in filtered:
+        cd_score = cd.get("cross_domain_score", 0.0)
+        st.markdown(
+            f"""
+            <div style='background:rgba(22,27,34,0.7); border:1px solid rgba(163,113,247,0.3); border-radius:12px; padding:1.2rem; margin-bottom:1rem;'>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <div style='font-size:1.1rem; font-weight:700; color:#e6edf3;'>
+                        {cd.get('concept_a')} <span style='color:#a371f7;'>↔</span> {cd.get('concept_b')}
+                    </div>
+                    <div style='font-size:1rem; font-weight:700; color:#a371f7;'>
+                        Score: {cd_score:.3f}
+                    </div>
+                </div>
+                <div style='margin-top:0.4rem; font-size:0.85rem; color:#8b949e;'>
+                    <span style='color:#58a6ff;'>{cd.get('domain_a')}</span> &nbsp;⇄&nbsp; <span style='color:#3fb950;'>{cd.get('domain_b')}</span>
+                    &nbsp;·&nbsp; Semantic Compatibility: {cd.get('semantic_compatibility', 0):.2f}
+                    &nbsp;·&nbsp; Interdisciplinary Distance: {cd.get('domain_distance', 0):.2f}
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def _render_provenance(provenance_map: dict, candidates: list):
+    """Render transparent evidence and provenance trail."""
+    st.markdown("### 📚 Recommendation Evidence & Provenance")
+    st.markdown(
+        """
+        <div style='font-size:0.85rem; color:#8b949e; margin-bottom:1.2rem;'>
+            Trace every recommendation directly back to supporting papers, graph topology, and model metrics.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if not provenance_map or not candidates:
+        st.info("Provenance data is not available.")
+        return
+
+    candidate_options = [c.get("connection", f"{c.get('concept_a')} + {c.get('concept_b')}") for c in candidates[:10]]
+    chosen_conn = st.selectbox("Select Candidate to Inspect Evidence:", candidate_options, key="provenance_select_box")
+
+    prov = provenance_map.get(chosen_conn)
+    if not prov:
+        st.warning("No detailed provenance found for this candidate.")
+        return
+
+    strength = prov.get("evidence_strength", "EXPLORATORY")
+    strength_color = "#3fb950" if strength == "HIGH" else ("#f0883e" if strength == "MEDIUM" else "#8b949e")
+
+    st.markdown(
+        f"""
+        <div style='background:#161b22; border:1px solid #30363d; border-radius:12px; padding:1.25rem; margin-bottom:1.5rem;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <div style='font-size:1.2rem; font-weight:700; color:#e6edf3;'>Evidence Trail for {chosen_conn}</div>
+                <div style='background:{strength_color}22; color:{strength_color}; border:1px solid {strength_color}; padding:2px 10px; border-radius:12px; font-weight:600;'>
+                    Evidence Strength: {strength}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("#### 📄 Supporting Papers")
+        papers = prov.get("supporting_papers", [])
+        if papers:
+            for p in papers:
+                ev_type = p.get("evidence_type", "").replace("_", " ").title()
+                st.markdown(
+                    f"- **{p.get('title', 'Untitled')}** ({p.get('year', 'N/A')})\n"
+                    f"  - *Evidence:* `{ev_type}` | *Matched:* {', '.join(p.get('matched_concepts', []))}"
+                )
+        else:
+            st.write("No direct paper co-occurrences (inferred via graph structure).")
+
+    with col2:
+        st.markdown("#### 🕸️ Graph & Temporal Evidence")
+        ge = prov.get("graph_evidence", {})
+        te = prov.get("temporal_evidence", {})
+        st.write(f"- **Shortest Path Length:** `{ge.get('shortest_path_length', 'N/A')}`")
+        st.write(f"- **Direct Co-occurrence Weight:** `{ge.get('cooccurrence_weight', 0)}`")
+        if ge.get("common_neighbors"):
+            st.write(f"- **Common Bridge Concepts:** {', '.join(ge.get('common_neighbors', []))}")
+        st.write(f"- **First Observed Years:** Concept A ({te.get('first_seen_year_a', 'N/A')}) · Concept B ({te.get('first_seen_year_b', 'N/A')})")
+
+    st.markdown("#### 🔍 Traceability Narrative")
+    for np_item in prov.get("narrative_points", []):
+        st.markdown(f"• {np_item}")
+
+
+def _render_research_assistant(result: dict):
+    """Render interactive context-grounded conversational assistant."""
+    from services.research_assistant import query_research_assistant, PRESET_QUESTIONS
+
+    st.markdown("### 💬 Interactive Research Assistant")
+    st.markdown(
+        """
+        <div style='font-size:0.85rem; color:#8b949e; margin-bottom:1rem;'>
+            Ask questions about the uploaded papers, graph metrics, research gaps, and hypotheses.
+            Answers are strictly grounded in your corpus.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    if "assistant_messages" not in st.session_state:
+        st.session_state.assistant_messages = [
+            {
+                "role": "assistant",
+                "content": "Hello! I am your PaperGraph Research Assistant. Ask me anything about your uploaded corpus, top recommendations, research gaps, or experimental methodologies.",
+            }
+        ]
+
+    # Quick action prompt buttons
+    st.markdown("##### ⚡ Quick Queries")
+    q_cols = st.columns(4)
+    with q_cols[0]:
+        if st.button("Why recommended?", key="qa_why", use_container_width=True):
+            _handle_assistant_query(PRESET_QUESTIONS["why_recommended"], result)
+    with q_cols[1]:
+        if st.button("Supporting papers?", key="qa_papers", use_container_width=True):
+            _handle_assistant_query(PRESET_QUESTIONS["supporting_papers"], result)
+    with q_cols[2]:
+        if st.button("Why is this a gap?", key="qa_gap", use_container_width=True):
+            _handle_assistant_query(PRESET_QUESTIONS["why_gap"], result)
+    with q_cols[3]:
+        if st.button("Research questions?", key="qa_rq", use_container_width=True):
+            _handle_assistant_query(PRESET_QUESTIONS["research_questions"], result)
+
+    # Render message history
+    for msg in st.session_state.assistant_messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
+
+    # Chat input box
+    if prompt := st.chat_input("Ask a research question about this analysis…"):
+        _handle_assistant_query(prompt, result)
+
+
+def _handle_assistant_query(query_text: str, result: dict):
+    """Process user prompt and update assistant message history."""
+    from services.research_assistant import query_research_assistant
+
+    st.session_state.assistant_messages.append({"role": "user", "content": query_text})
+    with st.chat_message("user"):
+        st.markdown(query_text)
+
+    with st.chat_message("assistant"):
+        with st.spinner("Analyzing corpus context…"):
+            reply = query_research_assistant(
+                user_query=query_text,
+                analysis_result=result,
+                conversation_history=st.session_state.assistant_messages,
+            )
+            st.markdown(reply)
+            st.session_state.assistant_messages.append({"role": "assistant", "content": reply})
+
 
 
 def _render_graph_viz(result: dict, candidates: list):
@@ -1502,19 +1865,21 @@ def page_about():
         )
 
     st.markdown("---")
-    st.markdown("### 🔗 Base Paper Mapping")
+    st.markdown("### 🏛️ Base Paper Methodology vs. Our 5 Academic Extensions")
     st.markdown(
         """
-        | Base Paper Component | PaperGraph Analogue |
-        |---|---|
-        | SE-TGN (temporal GNN, trained on large corpus) | NetworkX graph metrics + optional GCN encoder |
-        | Multi-year co-occurrence event stream | Single-snapshot graph from 5–10 PDFs |
-        | CREF (LLM re-ranking: novelty/impact/plausibility/interdisciplinarity) | Same 4 dimensions, top 3 candidates |
-        | GIC (LLM insight: definitions, rationale, questions, hypotheses) | Same output shape, top candidate |
-        | AUC/AP/P@K/NDCG@K validation | No formal validation — exploratory only |
+        | Component | Category | Base Paper (KBS 2025) | PaperGraph (Our Extension) |
+        |---|---|---|---|
+        | **SE-TGN & Temporal Graph** | Base Methodology | Trained on thousands of timestamped papers | Continuous GRU `NodeMemory` + `TimeEncode` on user corpus |
+        | **CREF & GIC** | Base Methodology | Multi-dimension rubric + hypothesis generation | Gemini-powered CREF scores & GIC research roadmap |
+        | **Quantitative Evaluation** | Base Methodology | AUC, AP, P@10, NDCG@10 metrics | `scikit-learn` baseline evaluator comparing Random, Graph, GCN, SE-TGN |
+        | **1. Research Gap Detection** | 🌟 **Our Contribution** | Not implemented | Multi-factor gap scoring (semantic, structural, temporal, cross-domain) |
+        | **2. Evidence / Provenance** | 🌟 **Our Contribution** | Not implemented | Traceable paper citations, graph topology evidence, and strength scores |
+        | **3. Human-in-the-Loop Feedback**| 🌟 **Our Contribution** | Static ranking only | Interactive ratings (👍 ⭐ 👎 🔖) + real-time personalized reranking |
+        | **4. Cross-Domain Discovery** | 🌟 **Our Contribution** | Not implemented | Multi-discipline domain classification & interdisciplinary synergy scoring |
+        | **5. Interactive Research Assistant**| 🌟 **Our Contribution** | Not implemented | Context-grounded conversational agent with anti-hallucination guardrails |
         
-        **Reference:** *"Uncovering novel scientific insights with a synergistic GNN-LLM framework"*,
-        Knowledge-Based Systems, 2025.
+        **Reference:** *"Uncovering novel scientific insights with a synergistic GNN-LLM framework"*, Knowledge-Based Systems, 2025.
         """
     )
 
@@ -1525,7 +1890,7 @@ def page_about():
     with col1:
         st.markdown(
             """
-            **Core**
+            **Core Framework**
             - Python 3.11+
             - Streamlit (UI)
             - python-dotenv
@@ -1534,20 +1899,21 @@ def page_about():
     with col2:
         st.markdown(
             """
-            **Analysis**
-            - PyMuPDF (PDF extraction)
-            - sentence-transformers (embeddings)
-            - NetworkX (graph)
-            - Plotly (visualization)
+            **Graph & Machine Learning**
+            - PyTorch (SE-TGN)
+            - PyTorch Geometric (GCN)
+            - sentence-transformers (`all-MiniLM-L6-v2`)
+            - NetworkX & Plotly
+            - scikit-learn (Metrics)
             """
         )
     with col3:
         st.markdown(
             """
-            **Optional**
-            - PyTorch + PyTorch Geometric (GNN)
-            - google-generativeai (LLM)
-            - GEMINI_API_KEY (required for LLM)
+            **LLM & Extraction**
+            - PyMuPDF (PDF processing)
+            - Google Gemini (`gemini-2.5-flash` / `gemini-3.6-flash`)
+            - google-genai SDK
             """
         )
 
