@@ -1,7 +1,50 @@
 {
-  "preferred_concepts": {},
-  "preferred_domains": {},
-  "disliked_concepts": {},
-  "feedback_history": [],
-  "last_updated": "2026-08-27T17:40:36.600088"
+  "preferred_concepts": {
+    "February": 0.6,
+    "June": 0.6
+  },
+  "preferred_domains": {
+    "Artificial Intelligence": -3.2,
+    "Computer Science": 1.2
+  },
+  "disliked_concepts": {
+    "Large Language Model": 1.6,
+    "With Large Language Model": 1.6
+  },
+  "feedback_history": [
+    {
+      "candidate_id": "cand_001",
+      "concept_a": "Large Language Model",
+      "concept_b": "With Large Language Model",
+      "feedback_type": "not_relevant",
+      "weight": -0.8,
+      "domain_a": "Artificial Intelligence",
+      "domain_b": "Artificial Intelligence",
+      "note": "",
+      "timestamp": "2026-08-31T11:48:54.380272"
+    },
+    {
+      "candidate_id": "cand_001",
+      "concept_a": "Large Language Model",
+      "concept_b": "With Large Language Model",
+      "feedback_type": "not_relevant",
+      "weight": -0.8,
+      "domain_a": "Artificial Intelligence",
+      "domain_b": "Artificial Intelligence",
+      "note": "",
+      "timestamp": "2026-08-31T11:49:00.110630"
+    },
+    {
+      "candidate_id": "cand_003",
+      "concept_a": "February",
+      "concept_b": "June",
+      "feedback_type": "interesting",
+      "weight": 0.6,
+      "domain_a": "Computer Science",
+      "domain_b": "Computer Science",
+      "note": "",
+      "timestamp": "2026-08-31T11:49:11.451651"
+    }
+  ],
+  "last_updated": "2026-08-31T11:49:11.452305"
 }
