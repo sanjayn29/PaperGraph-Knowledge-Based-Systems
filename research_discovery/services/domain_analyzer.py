@@ -286,7 +286,8 @@ def extract_cross_domain_discoveries(
 
         sem_score = float(cand.get("semantic_similarity", 0.5))
         gap_score = float(cand.get("research_gap", {}).get("score", 0.5)) if isinstance(cand.get("research_gap"), dict) else 0.5
-        temp_score = float(cand.get("setgn_score", 0.5))
+        setgn_score = cand.get("setgn_score")
+        temp_score = float(setgn_score if setgn_score is not None else 0.5)
 
         cd_score = compute_cross_domain_score(
             domain_a=dom_a,

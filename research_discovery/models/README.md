@@ -21,8 +21,10 @@ The base paper (SE-TGN) trains a Temporal Graph Network on tens of thousands of 
 co-occurrence events from a large historical corpus, then validates link prediction performance  
 on held-out years using AUC/AP/P@K/NDCG@K metrics.
 
-This project operates on **5–10 uploaded PDFs** with no historical corpus, no event stream,  
-and no held-out validation set. Training a GNN in this setting would be statistically meaningless.  
+This project operates on **5–10 uploaded PDFs** rather than the base paper's large historical corpus.
+It builds a small temporal event stream and supports chronological held-out evaluation when enough
+publication years are available. Training a separate GNN in this small setting would still be
+statistically limited.
 The GCN encoder is used only as a lightweight structural feature extractor, honestly labeled  
 as such in the UI.
 

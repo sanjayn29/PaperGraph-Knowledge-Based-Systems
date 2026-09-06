@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from unittest.mock import patch
 
 from services.se_tgn import (
     SETGN_AVAILABLE,
@@ -207,6 +208,40 @@ def test_train_setgn_insufficient_events():
     tg.sort()
     result = train_setgn(tg, {})
     assert result is None
+
+
+def test_train_setgn_excludes_held_out_events_from_memory_updates():
+    from services.se_tgn import SETGN, train_setgn
+
+    training_events = [
+        TemporalEvent("A", "B", f"train_{year}", year, np.zeros(384))
+        for year in range(2020, 2030)
+    ]
+    held_out_event = TemporalEvent("C", "D", "test_2030", 2030, np.zeros(384))
+    temporal_graph = TemporalGraph()
+    for event in training_events + [held_out_event]:
+        temporal_graph.add_event(event)
+    temporal_graph.sort()
+
+    update_timestamps = []
+    original_process_event = SETGN.process_event
+
+    def tracked_process_event(self, src_idx, dst_idx, paper_emb, timestamp, memory):
+        update_timestamps.append(timestamp)
+        return original_process_event(self, src_idx, dst_idx, paper_emb, timestamp, memory)
+
+    with patch.object(SETGN, "process_event", tracked_process_event):
+        result = train_setgn(
+            temporal_graph,
+            {},
+            n_epochs=1,
+            training_events=training_events,
+            concept_names=["A", "B", "C", "D"],
+        )
+
+    assert result is not None
+    assert update_timestamps == [float(year) for year in range(2020, 2030)]
+    assert 2030.0 not in update_timestamps
 
 
 # ─────────────────────────────────────────────────────────────

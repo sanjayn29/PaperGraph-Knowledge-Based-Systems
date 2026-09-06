@@ -5,12 +5,15 @@ Unit tests for Research Gap Detection scoring and heuristics.
 """
 
 import networkx as nx
+import numpy as np
 import pytest
 from services.research_gap_detector import (
+    compute_temporal_emergence,
     compute_structural_opportunity,
     compute_research_gap_score,
     detect_research_gaps,
 )
+from services.temporal_graph import TemporalEvent, TemporalGraph
 
 
 def test_compute_structural_opportunity():
@@ -38,6 +41,22 @@ def test_compute_research_gap_score():
     )
     assert 0.0 <= score <= 1.0
     assert score > 0.75
+
+
+def test_compute_temporal_emergence_uses_temporal_graph_api():
+    empty_graph = TemporalGraph()
+    assert compute_temporal_emergence("A", "B", empty_graph) == 0.5
+
+    temporal_graph = TemporalGraph()
+    temporal_graph.add_event(
+        TemporalEvent("A", "C", "paper_001", 2020, np.zeros(384))
+    )
+    temporal_graph.add_event(
+        TemporalEvent("B", "C", "paper_002", 2024, np.zeros(384))
+    )
+    temporal_graph.sort()
+
+    assert compute_temporal_emergence("A", "B", temporal_graph) == 0.5
 
 
 def test_detect_research_gaps():

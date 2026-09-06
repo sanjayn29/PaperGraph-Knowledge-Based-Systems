@@ -301,6 +301,7 @@ def run_pipeline(
             candidates=candidates,
             concept_domains=concept_domains,
             concept_embeddings=concept_embeddings,
+            context_id=result["created_at"],
         )
         result["personalized_candidates"] = personalized_candidates
 
@@ -436,7 +437,8 @@ def _run_evaluation(
             SKLEARN_AVAILABLE,
             run_baseline_comparison,
             all_concept_pairs,
-            evaluator_status,
+            run_evaluation_variant,
+            semantic_similarity_scores,
         )
         from services.graph_analyzer import compute_centralities, _graph_score_for_pair
 
@@ -467,16 +469,56 @@ def _run_evaluation(
         concepts = temporal_graph.unique_concepts()
         all_pairs = all_concept_pairs(concepts)
 
+        # Recompute model scores from the chronological training prefix only.
+        from services.se_tgn import compute_setgn_scores
+
+        evaluation_setgn_scores = compute_setgn_scores(
+            temporal_graph,
+            concept_embeddings,
+            training_events=train_events,
+            concept_names=concepts,
+        )
+
+        # Build evaluation graph state from training events only. The full graph
+        # remains unchanged for normal discovery and candidate generation.
+        import networkx as nx
+
+        evaluation_graph = nx.Graph()
+        evaluation_graph.add_nodes_from(concepts)
+        for event in train_events:
+            if evaluation_graph.has_edge(event.source_concept, event.target_concept):
+                evaluation_graph[event.source_concept][event.target_concept]["weight"] += 1
+            else:
+                evaluation_graph.add_edge(
+                    event.source_concept,
+                    event.target_concept,
+                    weight=1,
+                )
+
+        evaluation_gnn_scores = gnn_scores
+        if gnn_scores is not None:
+            from services.gnn_model import compute_gnn_scores
+
+            evaluation_gnn_scores = compute_gnn_scores(
+                evaluation_graph,
+                concept_embeddings if concept_embeddings else None,
+            )
+
         # Build graph scores for all pairs
         import numpy as np
-        centralities = compute_centralities(G)
-        edge_weights = [G[u][v].get("weight", 1) for u, v in G.edges()]
+        centralities = compute_centralities(evaluation_graph)
+        edge_weights = [
+            evaluation_graph[u][v].get("weight", 1)
+            for u, v in evaluation_graph.edges()
+        ]
         max_weight = max(edge_weights) if edge_weights else 1.0
 
         graph_scores = {}
         for c_a, c_b in all_pairs:
-            if G.has_node(c_a) and G.has_node(c_b):
-                gs = _graph_score_for_pair(c_a, c_b, G, centralities, max_weight)
+            if evaluation_graph.has_node(c_a) and evaluation_graph.has_node(c_b):
+                gs = _graph_score_for_pair(
+                    c_a, c_b, evaluation_graph, centralities, max_weight
+                )
             else:
                 gs = 0.0
             graph_scores[(c_a, c_b)] = gs
@@ -485,9 +527,27 @@ def _run_evaluation(
             all_pairs=all_pairs,
             test_positives=test_positives,
             graph_scores=graph_scores,
-            gnn_scores=gnn_scores,
-            setgn_scores=setgn_scores,
+            gnn_scores=evaluation_gnn_scores,
+            setgn_scores=evaluation_setgn_scores,
         )
+
+        semantic_scores = semantic_similarity_scores(all_pairs, concept_embeddings)
+        ablation_results = {}
+        for variant in ("full", "graph_only", "semantic_only"):
+            try:
+                ablation_results[variant] = run_evaluation_variant(
+                    variant=variant,
+                    all_pairs=all_pairs,
+                    test_positives=test_positives,
+                    graph_scores=graph_scores,
+                    setgn_scores=evaluation_setgn_scores,
+                    semantic_scores=semantic_scores,
+                )
+            except ValueError as exc:
+                ablation_results[variant] = {
+                    "sufficient_data": False,
+                    "message": str(exc),
+                }
 
         return {
             "sufficient_data": True,
@@ -497,6 +557,7 @@ def _run_evaluation(
             "test_events": len(test_events),
             "test_positives": len(test_positives),
             "baselines": baselines,
+            "ablations": ablation_results,
         }
 
     except Exception as exc:

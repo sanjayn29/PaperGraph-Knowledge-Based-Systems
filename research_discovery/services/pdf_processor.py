@@ -253,6 +253,7 @@ def peek_pdf_year(file_bytes: bytes, filename: str = "") -> tuple[Optional[int],
     if not FITZ_AVAILABLE or not file_bytes:
         return None, "estimated"
 
+    doc = None
     try:
         doc = fitz.open(stream=file_bytes, filetype="pdf")
         meta = doc.metadata or {}
@@ -263,6 +264,12 @@ def peek_pdf_year(file_bytes: bytes, filename: str = "") -> tuple[Optional[int],
     except Exception as exc:
         logger.debug("Failed to peek year in %s: %s", filename, exc)
         return None, "estimated"
+    finally:
+        if doc is not None:
+            try:
+                doc.close()
+            except Exception:
+                pass
 
 
 
@@ -336,24 +343,25 @@ def _extract_year_with_source(
     meta: dict, full_text: str
 ) -> tuple[Optional[int], str]:
     """
-    Extract publication year prioritizing explicit citation headers, publication notices,
-    and text patterns over PDF file creation timestamps.
+    Extract publication year prioritizing front-matter publication notices and arXiv
+    identifiers, then PDF metadata, then body text patterns.
 
     Returns
     -------
     (year, source) where source is one of:
         'citation_header' — explicit copyright, conference, or publication header
         'arxiv_id'        — extracted from arXiv identifier (e.g. arXiv:1706.03762 -> 2017)
-        'text_regex'      — extracted from year pattern in first 3000 chars of text
+        'text_regex'      — extracted from year pattern in the body text
         'metadata'        — extracted from PDF creation/mod metadata date field
         'estimated'       — could not determine; year is None
     """
     snippet = full_text[:3500] if full_text else ""
+    front_matter = snippet[:1500]
 
-    # 1. Explicit publication / copyright / conference patterns
+    # 1. Explicit publication / copyright / conference patterns in front matter
     pub_match = re.search(
         r"(?i)(?:published|proceedings|conference|journal|copyright|©|acm|ieee|elsevier|springer|accepted|appeared in)[\s\w,.:-]{0,50}\b(19[89]\d|20[012]\d)\b",
-        snippet,
+        front_matter,
     )
     if pub_match:
         try:
@@ -364,7 +372,7 @@ def _extract_year_with_source(
             pass
 
     # 2. arXiv identifier pattern (e.g., arXiv:1706.03762 -> 2017, arXiv:2104.12345 -> 2021)
-    arxiv_match = re.search(r"(?i)arxiv:(\d{2})\d{2}\.\d+", snippet)
+    arxiv_match = re.search(r"(?i)arxiv:(\d{2})\d{2}\.\d+", front_matter)
     if arxiv_match:
         try:
             yy = int(arxiv_match.group(1))
@@ -374,16 +382,7 @@ def _extract_year_with_source(
         except (ValueError, IndexError):
             pass
 
-    # 3. Frequency of 4-digit years in the first 2500 characters
-    years = _YEAR_RE.findall(snippet[:2500])
-    if years:
-        from collections import Counter
-        year_counts = Counter(int(y) for y in years)
-        most_common_yr, count = year_counts.most_common(1)[0]
-        if count >= 1:
-            return most_common_yr, "text_regex"
-
-    # 4. Metadata dates (format: D:YYYYMMDDHHmmSS)
+    # 3. Metadata dates (format: D:YYYYMMDDHHmmSS)
     for field in ("creationDate", "modDate"):
         raw = (meta.get(field) or "").strip()
         if raw.startswith("D:") and len(raw) >= 6:
@@ -393,6 +392,23 @@ def _extract_year_with_source(
                     return yr, "metadata"
             except ValueError:
                 pass
+
+    # 4. Frequency of 4-digit years in body text, excluding references.
+    body_text = full_text or ""
+    references_match = re.search(
+        r"(?im)^\s*(?:references|bibliography)\s*:?[ \t]*$",
+        body_text,
+    )
+    if references_match:
+        body_text = body_text[:references_match.start()]
+
+    years = _YEAR_RE.findall(body_text[:2500])
+    if years:
+        from collections import Counter
+        year_counts = Counter(int(y) for y in years)
+        most_common_yr, count = year_counts.most_common(1)[0]
+        if count >= 1:
+            return most_common_yr, "text_regex"
 
     return None, "estimated"
 

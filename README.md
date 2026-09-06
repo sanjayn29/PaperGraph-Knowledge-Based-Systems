@@ -56,7 +56,7 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 🧪 Running Tests
 
-Run the complete test suite (93 unit tests across temporal graphs, SE-TGN, evaluators, and processors):
+Run the complete test suite (130 tests across temporal graphs, SE-TGN, evaluators, processors, and pipeline regressions):
 
 ```bash
 python -m pytest tests/ -v

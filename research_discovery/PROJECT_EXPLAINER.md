@@ -10,12 +10,12 @@
 |---|---|---|---|
 | **Base Methodology** | **Temporal Graph Modeling** | Continuous timestamped co-occurrences | `TemporalEvent` stream with `TemporalGraph` engine |
 | **Base Methodology** | **SE-TGN Architecture** | Temporal GNN with semantic message passing | PyTorch `NodeMemory` (GRU) + `TimeEncode` (Sinusoidal) + Link Classifier |
-| **Base Methodology** | **CREF & GIC Layer** | Multi-dimension rubric + hypothesis generation | Gemini-powered CREF scores & GIC research roadmap |
-| **Base Methodology** | **Formal Benchmarking** | AUC, AP, P@10, NDCG@10 metrics | `scikit-learn` baseline evaluator comparing Random, Graph, GCN, SE-TGN |
+| **Base Methodology** | **CREF & GIC Layer** | Multi-dimension rubric + hypothesis generation | Gemini-powered CREF scores and structured insight generation |
+| **Base Methodology** | **Formal Benchmarking** | AUC, AP, P@10, Recall@10, Hits@10, NDCG@10 | `scikit-learn` evaluator comparing Random, Graph, GCN, and SE-TGN |
 | **🌟 Our Extension 1** | **Research Gap Detection** | ❌ Not in base paper | Multi-factor gap scoring (semantic, structural, temporal, cross-domain, novelty) |
 | **🌟 Our Extension 2** | **Evidence & Provenance** | ❌ Not in base paper | Complete citation traceability, graph topology proofs, and evidence strength |
 | **🌟 Our Extension 3** | **Human-in-the-Loop Rerank** | ❌ Static ranking only | Interactive feedback (👍 ⭐ 👎 🔖) + real-time personalized reranking without retraining |
-| **🌟 Our Extension 4** | **Cross-Domain Discovery** | ❌ Not in base paper | 11-discipline domain taxonomy, centroid embeddings, & synergy filtering |
+| **🌟 Our Extension 4** | **Cross-Domain Discovery** | ❌ Not in base paper | 10-domain taxonomy, centroid embeddings, & synergy filtering |
 | **🌟 Our Extension 5** | **Interactive Research Assistant** | ❌ Not in base paper | Context-grounded conversational agent with strict anti-hallucination guardrails |
 
 ---
@@ -23,33 +23,41 @@
 ## 🗺️ 2. High-Level Extended Architecture
 
 ```
-                    EXISTING BASE PIPELINE
-                             │
-                             ▼
-                       Candidate Pool
-                             │
-              ┌──────────────┼───────────────┐
-              │              │               │
-              ▼              ▼               ▼
-      Research Gap      Cross-Domain     Evidence /
-       Detection         Discovery       Provenance
-              │              │               │
-              └──────────────┼───────────────┘
-                             ▼
-                    Candidate Enrichment
-                             │
-                             ▼
-                 CREF + GIC Existing Layer
-                             │
-                             ▼
-                  Human-in-the-Loop Ranking
-                             │
-                             ▼
-                Personalized Recommendations
-                             │
-                             ▼
-               Interactive Research Assistant
+                          Temporal Events
+                            │
+                            ▼
+                          Model Selection
+                          /              \
+                         ▼                ▼
+                          SE-TGN          GCN fallback
+                         │                │
+                         └───────┬────────┘
+                            ▼
+                        Candidate Ranking
+                            │
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+                  Research Gap       Cross-Domain       Evidence /
+                   Detection          Discovery        Provenance
+                            │
+                            ▼
+                          Candidate Enrichment
+                            │
+                            ▼
+                            CREF + GIC
+                            │
+                            ▼
+                         Personalization and Assistant
 ```
+
+SE-TGN is the primary temporal model when active. The GCN is a separate,
+lightweight fallback/baseline; its output is not fed into SE-TGN.
+
+For normal discovery, the complete uploaded corpus may be used for candidate
+generation. Evaluation is separate: SE-TGN is trained and scored only on
+chronological training events, while held-out test events do not update memory
+before prediction. Static graph and optional GCN evaluation use training-event
+graph state. Validation events are not used for model selection.
 
 ---
 
@@ -74,7 +82,7 @@ Provides verifiable evidence cards linking candidate predictions back to raw cor
 * **Supporting Papers:** Identifies papers containing $u$, $v$, or both, with exact titles, years, and authors.
 * **Graph Proof:** Reports shortest path length, direct co-occurrence frequency, and common intermediate bridge concepts.
 * **Evidence Strength Classification:**
-  - `HIGH`: Direct co-occurrence in multiple papers + candidate score $\ge 0.70$.
+  - `HIGH`: Direct co-occurrence evidence + candidate score $\ge 0.70$.
   - `MEDIUM`: Contextual paper support $\ge 2$ or semantic similarity $\ge 0.65$.
   - `EXPLORATORY`: Distant conceptual leap inferred primarily via graph topology.
 
@@ -85,14 +93,14 @@ Enables researchers to iteratively guide recommendations without retraining the 
 
 $$\text{PersonalizedScore}(u, v) = 0.70 \cdot \text{Score}_{\text{original}}(u, v) + 0.15 \cdot \text{Score}_{\text{pref}}(u, v) + 0.15 \cdot \text{Score}_{\text{sim}}(u, v)$$
 
-* **$\text{Score}_{\text{pref}}$:** Explicit boosts from user ratings (+1.0 for ⭐ High Value, +0.6 for 👍 Useful, -0.8 for 👎 Irrelevant, -0.5 for "Not My Area").
+* **$\text{Score}_{\text{pref}}$:** Explicit boosts from user ratings (+1.0 for ⭐ High Value, +0.6 for 👍 Useful, -0.8 for 👎 Irrelevant).
 * **$\text{Score}_{\text{sim}}$:** Semantic affinity to previously favored concept embeddings.
 * **UI Features:** Live rank delta badges (e.g. `▲ +5 (Orig #7)`) and plain-English explanation of movements.
 
 ---
 
 ### Feature 4: Cross-Domain Discovery (`services/domain_analyzer.py`)
-Classifies concepts into 11 standard scientific disciplines and identifies cross-field synergies:
+Classifies concepts into 10 scientific domains and identifies cross-field synergies:
 
 $$\text{CrossDomainScore}(u, v) = 0.40 \cdot \text{Dist}(\text{Dom}_u, \text{Dom}_v) + 0.30 \cdot S_{\text{sem}}(u, v) + 0.20 \cdot \text{GapScore}(u, v) + 0.10 \cdot S_{\text{temp}}(u, v)$$
 
@@ -132,7 +140,7 @@ When presenting this project to an examiner or review committee, use this step-b
 > 1. *Research Gap Detection — to find missing links between prominent concepts.*
 > 2. *Evidence Provenance — to make every AI recommendation auditable back to source papers.*
 > 3. *Human-in-the-Loop Personalization — allowing researchers to steer rankings in real-time.*
-> 4. *Cross-Domain Discovery — identifying interdisciplinary breakthroughs across 11 disciplines.*
+> 4. *Cross-Domain Discovery — identifying interdisciplinary connections across 10 domains.*
 > 5. *Interactive Research Assistant — a grounded conversational interface with anti-hallucination guardrails."*
 
 ### Step 3: Live UI Demonstration
@@ -149,11 +157,11 @@ When presenting this project to an examiner or review committee, use this step-b
 
 ## 🧪 5. Automated Testing Verification
 
-PaperGraph includes **107 automated unit tests** verifying all mathematical models and UI services:
+PaperGraph includes **130 automated tests** verifying all mathematical models and UI services:
 
 ```bash
 python -m pytest tests/ -v
 ```
 ```
-============================= 107 passed in 18.0s =============================
+============================= 130 passed =============================
 ```

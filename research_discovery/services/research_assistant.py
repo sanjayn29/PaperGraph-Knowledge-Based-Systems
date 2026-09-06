@@ -158,7 +158,7 @@ STRICT INSTRUCTIONS:
     try:
         if llm._client:
             response = llm._client.models.generate_content(
-                model=llm._model_name,
+                model=llm.model_name,
                 contents=full_prompt,
             )
             return (response.text or "").strip()
@@ -196,10 +196,12 @@ def _fallback_assistant_response(
             )
 
     if "paper" in q_lower or "support" in q_lower:
-        papers = analysis_result.get("papers", [])
+        papers = _supporting_papers_for_fallback(analysis_result, active_candidate)
         return (
             "### Supporting Papers in Corpus\n\n"
             + "\n".join([f"- **{p.get('title', 'Untitled')}** ({p.get('year', 'Unknown')})" for p in papers[:5]])
+            if papers
+            else "### Supporting Papers in Corpus\n\nNo supporting papers were identified for this connection."
         )
 
     if "gap" in q_lower:
@@ -223,3 +225,40 @@ def _fallback_assistant_response(
         f"- Total Events: {analysis_result.get('temporal_summary', {}).get('total_events', 0)}\n"
         f"- Note: Connect a `GEMINI_API_KEY` for conversational depth."
     )
+
+
+def _supporting_papers_for_fallback(
+    analysis_result: dict,
+    active_candidate: Optional[dict] = None,
+) -> list[dict]:
+    """Return only corpus papers with explicit or concept-level support."""
+    papers = analysis_result.get("papers", [])
+    candidates = analysis_result.get("candidates", [])
+    candidate = active_candidate or (candidates[0] if candidates else None)
+    if not candidate:
+        return []
+
+    paper_by_id = {
+        paper.get("paper_id"): paper
+        for paper in papers
+        if paper.get("paper_id")
+    }
+    candidate_key = f"{candidate.get('concept_a', '')} + {candidate.get('concept_b', '')}"
+    provenance = analysis_result.get("provenance", {}).get(candidate_key, {})
+    explicit_ids = {
+        paper.get("paper_id")
+        for paper in provenance.get("supporting_papers", [])
+        if paper.get("paper_id")
+    }
+    if explicit_ids:
+        return [paper_by_id[paper_id] for paper_id in explicit_ids if paper_id in paper_by_id]
+
+    concepts = {
+        candidate.get("concept_a"),
+        candidate.get("concept_b"),
+    } - {None, ""}
+    return [
+        paper
+        for paper in papers
+        if concepts.intersection(paper.get("concepts", []))
+    ]

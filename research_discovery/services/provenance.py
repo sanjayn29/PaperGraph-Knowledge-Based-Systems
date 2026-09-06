@@ -117,9 +117,17 @@ def build_candidate_provenance(
         "shared_event_years": [],
     }
 
-    if temporal_graph and not temporal_graph.is_empty:
-        years_a = [e.timestamp for e in temporal_graph.events if e.source == ca or e.target == ca]
-        years_b = [e.timestamp for e in temporal_graph.events if e.source == cb or e.target == cb]
+    if temporal_graph and not temporal_graph.is_empty():
+        years_a = [
+            e.timestamp
+            for e in temporal_graph.events
+            if e.source_concept == ca or e.target_concept == ca
+        ]
+        years_b = [
+            e.timestamp
+            for e in temporal_graph.events
+            if e.source_concept == cb or e.target_concept == cb
+        ]
 
         if years_a:
             temporal_evidence["concept_a_events"] = len(years_a)
@@ -130,7 +138,8 @@ def build_candidate_provenance(
 
         shared_years = [
             e.timestamp for e in temporal_graph.events
-            if (e.source == ca and e.target == cb) or (e.source == cb and e.target == ca)
+            if (e.source_concept == ca and e.target_concept == cb)
+            or (e.source_concept == cb and e.target_concept == ca)
         ]
         temporal_evidence["shared_event_years"] = sorted(list(set(shared_years)))
 

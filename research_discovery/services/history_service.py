@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,7 @@ logger = logging.getLogger(__name__)
 # Resolve the history directory relative to this file's location
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 _HISTORY_DIR = _PROJECT_ROOT / "data" / "history"
+_ANALYSIS_ID_RE = re.compile(r"^analysis_[A-Za-z0-9_-]+$")
 
 
 def _ensure_history_dir() -> Path:
@@ -53,6 +55,12 @@ def save_analysis(result: dict) -> Optional[str]:
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     analysis_id = f"analysis_{timestamp}"
+    filepath = history_dir / f"{analysis_id}.json"
+    suffix = 1
+    while filepath.exists():
+        analysis_id = f"analysis_{timestamp}_{suffix}"
+        filepath = history_dir / f"{analysis_id}.json"
+        suffix += 1
 
     # Sanitize: remove full_text from papers
     clean_papers = []
@@ -82,7 +90,6 @@ def save_analysis(result: dict) -> Optional[str]:
         "warnings": result.get("warnings", []),
     }
 
-    filepath = history_dir / f"{analysis_id}.json"
     success = safe_json_dump(history_record, filepath)
 
     if success:
@@ -140,6 +147,10 @@ def load_analysis(analysis_id: str) -> Optional[dict]:
 
     Returns the full dict or None if not found / unreadable.
     """
+    if not _ANALYSIS_ID_RE.fullmatch(analysis_id):
+        logger.warning("Invalid history analysis id: %s", analysis_id)
+        return None
+
     history_dir = _ensure_history_dir()
     filepath = history_dir / f"{analysis_id}.json"
 
@@ -160,6 +171,10 @@ def delete_analysis(analysis_id: str) -> bool:
     Delete a history file by analysis_id.
     Returns True if deleted, False if not found or error.
     """
+    if not _ANALYSIS_ID_RE.fullmatch(analysis_id):
+        logger.warning("Invalid history analysis id for deletion: %s", analysis_id)
+        return False
+
     history_dir = _ensure_history_dir()
     filepath = history_dir / f"{analysis_id}.json"
     try:
