@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, PropertyMock, patch
 
 import pytest
 
@@ -22,6 +22,7 @@ from services.pdf_processor import (
     _extract_authors,
     _extract_title,
     _extract_year,
+    peek_pdf_year,
 )
 
 
@@ -80,6 +81,51 @@ class TestExtractYear:
         text = "In 2021, we proposed... In 2021, results show... In 2019, prior work..."
         result = _extract_year(meta, text)
         assert result == 2021
+
+    def test_metadata_year_beats_reference_year(self):
+        meta = {"creationDate": "D:20231015120000"}
+        text = "Introduction\nOur method improves prior work from 2019.\nReferences\nSmith, 2018."
+        result = _extract_year(meta, text)
+        assert result == 2023
+
+    def test_reference_only_year_is_not_a_publication_signal(self):
+        meta = {}
+        text = "Title\nReferences\nSmith, A. (2018). Earlier work."
+        result = _extract_year(meta, text)
+        assert result is None
+
+    def test_peek_pdf_year_closes_document_on_success_empty_result_and_error(self):
+        document = MagicMock()
+        document.metadata = {"creationDate": "D:20231015120000"}
+        document.__len__.return_value = 0
+
+        with patch("services.pdf_processor.fitz.open", return_value=document):
+            assert peek_pdf_year(b"pdf-bytes") == (2023, "metadata")
+        document.close.assert_called_once()
+
+        document.reset_mock()
+        document.metadata = {}
+        with patch("services.pdf_processor.fitz.open", return_value=document):
+            assert peek_pdf_year(b"pdf-bytes") == (None, "estimated")
+        document.close.assert_called_once()
+
+        error_document = MagicMock()
+        type(error_document).metadata = PropertyMock(side_effect=RuntimeError("boom"))
+        with patch("services.pdf_processor.fitz.open", return_value=error_document):
+            assert peek_pdf_year(b"pdf-bytes") == (None, "estimated")
+        error_document.close.assert_called_once()
+
+    def test_peek_pdf_year_prefers_metadata_over_reference_year(self):
+        document = MagicMock()
+        document.metadata = {"creationDate": "D:20231015120000"}
+        document.__len__.return_value = 1
+        document[0].get_text.return_value = (
+            "Title\nReferences\nSmith, A. (2018). Earlier work."
+        )
+
+        with patch("services.pdf_processor.fitz.open", return_value=document):
+            assert peek_pdf_year(b"pdf-bytes") == (2023, "metadata")
+        document.close.assert_called_once()
 
 
 class TestExtractAbstract:

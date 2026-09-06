@@ -43,36 +43,50 @@ FEEDBACK_WEIGHTS: dict[str, float] = {
 }
 
 
-def _load_user_profile() -> dict:
-    """Load persistent user feedback profile from data/user_feedback.json."""
+def _empty_profile() -> dict:
+    """Return an empty feedback profile."""
+    return {
+        "preferred_concepts": {},
+        "preferred_domains": {},
+        "disliked_concepts": {},
+        "feedback_history": [],
+        "last_updated": datetime.now().isoformat(),
+    }
+
+
+def _load_feedback_store() -> dict:
+    """Load the feedback store, preserving legacy top-level data."""
     if not _FEEDBACK_FILE.exists():
-        return {
-            "preferred_concepts": {},
-            "preferred_domains": {},
-            "disliked_concepts": {},
-            "feedback_history": [],
-            "last_updated": datetime.now().isoformat(),
-        }
+        return _empty_profile()
 
     try:
         with open(_FEEDBACK_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception as exc:
         logger.warning("Failed to load user feedback profile: %s", exc)
-        return {
-            "preferred_concepts": {},
-            "preferred_domains": {},
-            "disliked_concepts": {},
-            "feedback_history": [],
-            "last_updated": datetime.now().isoformat(),
-        }
+        return _empty_profile()
 
 
-def _save_user_profile(profile: dict) -> None:
-    """Save user feedback profile to data/user_feedback.json."""
+def _load_user_profile(context_id: Optional[str] = None) -> dict:
+    """Load a context-scoped profile without assigning legacy data to it."""
+    store = _load_feedback_store()
+    if context_id:
+        contexts = store.get("contexts", {})
+        profile = contexts.get(context_id)
+        return profile if isinstance(profile, dict) else _empty_profile()
+    return store
+
+
+def _save_user_profile(profile: dict, context_id: Optional[str] = None) -> None:
+    """Save a legacy or context-scoped profile to data/user_feedback.json."""
     try:
         _DATA_DIR.mkdir(parents=True, exist_ok=True)
         profile["last_updated"] = datetime.now().isoformat()
+        if context_id:
+            store = _load_feedback_store()
+            contexts = store.setdefault("contexts", {})
+            contexts[context_id] = profile
+            profile = store
         with open(_FEEDBACK_FILE, "w", encoding="utf-8") as f:
             json.dump(profile, f, indent=2)
     except Exception as exc:
@@ -87,6 +101,7 @@ def record_feedback(
     domain_a: str = "",
     domain_b: str = "",
     note: str = "",
+    context_id: Optional[str] = None,
 ) -> dict:
     """
     Record user feedback for a candidate pair and update the user preference profile.
@@ -100,12 +115,13 @@ def record_feedback(
     domain_a      : optional domain for concept_a
     domain_b      : optional domain for concept_b
     note          : optional user note
+    context_id    : analysis/session context for isolating feedback
 
     Returns
     -------
     Updated profile dictionary.
     """
-    profile = _load_user_profile()
+    profile = _load_user_profile(context_id)
     weight = FEEDBACK_WEIGHTS.get(feedback_type, 0.0)
 
     # 1. Update concept weights
@@ -133,27 +149,21 @@ def record_feedback(
         "domain_b": domain_b,
         "note": note,
         "timestamp": datetime.now().isoformat(),
+        "context_id": context_id,
     })
 
-    _save_user_profile(profile)
+    _save_user_profile(profile, context_id)
     return profile
 
 
-def clear_user_profile() -> None:
-    """Reset user feedback profile."""
-    empty_profile = {
-        "preferred_concepts": {},
-        "preferred_domains": {},
-        "disliked_concepts": {},
-        "feedback_history": [],
-        "last_updated": datetime.now().isoformat(),
-    }
-    _save_user_profile(empty_profile)
+def clear_user_profile(context_id: Optional[str] = None) -> None:
+    """Reset legacy or one context-scoped feedback profile."""
+    _save_user_profile(_empty_profile(), context_id)
 
 
-def get_user_profile_summary() -> dict:
-    """Get active profile statistics for display in UI."""
-    profile = _load_user_profile()
+def get_user_profile_summary(context_id: Optional[str] = None) -> dict:
+    """Get context-scoped profile statistics for display in UI."""
+    profile = _load_user_profile(context_id)
     return {
         "total_feedbacks": len(profile.get("feedback_history", [])),
         "preferred_concepts": profile.get("preferred_concepts", {}),
@@ -167,6 +177,7 @@ def compute_personalized_rankings(
     concept_domains: Optional[dict[str, dict]] = None,
     concept_embeddings: Optional[dict[str, np.ndarray]] = None,
     custom_profile: Optional[dict] = None,
+    context_id: Optional[str] = None,
 ) -> list[dict]:
     """
     Apply human-in-the-loop personalized reranking to candidates.
@@ -176,7 +187,7 @@ def compute_personalized_rankings(
     List of candidates augmented with 'personalized_score', 'original_rank',
     'personalized_rank', 'rank_delta', and 'personalization_reason'.
     """
-    profile = custom_profile or _load_user_profile()
+    profile = custom_profile or _load_user_profile(context_id)
     concept_domains = concept_domains or {}
 
     pref_concepts = profile.get("preferred_concepts", {})

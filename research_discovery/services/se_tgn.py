@@ -16,7 +16,7 @@ the base paper's full implementation:
   - The base paper trains on tens of thousands of papers over multiple years.
   - This version trains on 5–10 uploaded PDFs (a few dozen to a few hundred events).
   - No temporal attention mechanism; uses mean aggregation for simplicity.
-  - 1 training epoch per analysis session (fast for small datasets).
+    - 3 training epochs per analysis session (fast for small datasets).
   - CPU-only; no distributed training.
 
 Architecture
@@ -320,6 +320,8 @@ def train_setgn(
     n_epochs: int = TRAINING_EPOCHS,
     lr: float = LEARNING_RATE,
     seed: int = 42,
+    training_events: Optional[list] = None,
+    concept_names: Optional[list[str]] = None,
 ) -> Optional[tuple["SETGN", "NodeMemory", dict[str, int]]]:
     """
     Train the SE-TGN on a TemporalGraph's events.
@@ -331,6 +333,8 @@ def train_setgn(
     n_epochs           : number of training epochs
     lr                 : learning rate
     seed               : random seed for reproducibility
+    training_events    : optional chronological event subset for evaluation
+    concept_names      : optional full concept universe for evaluation scoring
 
     Returns
     -------
@@ -342,7 +346,7 @@ def train_setgn(
         logger.info("SE-TGN training skipped: PyTorch not available.")
         return None
 
-    events = temporal_graph.events
+    events = temporal_graph.events if training_events is None else training_events
     if len(events) < MIN_EVENTS_FOR_TRAINING:
         logger.info(
             "SE-TGN training skipped: only %d events (minimum: %d).",
@@ -355,7 +359,13 @@ def train_setgn(
     random.seed(seed)
     np.random.seed(seed)
 
-    concept_index = temporal_graph.concept_index()
+    concepts_set = set(
+        temporal_graph.unique_concepts() if concept_names is None else concept_names
+    )
+    for event in events:
+        concepts_set.add(event.source_concept)
+        concepts_set.add(event.target_concept)
+    concept_index = {concept: i for i, concept in enumerate(sorted(concepts_set))}
     concepts = list(concept_index.keys())
     n_concepts = len(concepts)
 
@@ -457,6 +467,8 @@ def compute_setgn_scores(
     temporal_graph,  # TemporalGraph
     concept_embeddings: dict[str, np.ndarray],
     query_time: Optional[int] = None,
+    training_events: Optional[list] = None,
+    concept_names: Optional[list[str]] = None,
 ) -> Optional[dict[tuple[str, str], float]]:
     """
     Train SE-TGN and compute link-prediction scores for all concept pairs.
@@ -467,6 +479,8 @@ def compute_setgn_scores(
     concept_embeddings : {concept → np.ndarray(384)}
     query_time         : the "future" time to predict links for.
                          If None, uses max(year) + 1 from the temporal graph.
+    training_events    : optional chronological event subset used for evaluation
+    concept_names      : optional full concept universe to score
 
     Returns
     -------
@@ -475,7 +489,12 @@ def compute_setgn_scores(
     if not SETGN_AVAILABLE:
         return None
 
-    trained = train_setgn(temporal_graph, concept_embeddings)
+    trained = train_setgn(
+        temporal_graph,
+        concept_embeddings,
+        training_events=training_events,
+        concept_names=concept_names,
+    )
     if trained is None:
         return None
 

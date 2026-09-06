@@ -52,14 +52,14 @@ def extract_concepts_from_paper(paper: dict) -> list[str]:
     Sources (in priority order):
     - title
     - abstract
-    - first 3000 chars of full_text (to keep computation tractable)
+    - full_text
 
     Returns a deduplicated, normalized list of concept strings.
     """
     text_sources = [
         paper.get("title", ""),
         paper.get("abstract", ""),
-        paper.get("full_text", "")[:3000],
+        paper.get("full_text", ""),
     ]
     combined = " ".join(s for s in text_sources if s)
 

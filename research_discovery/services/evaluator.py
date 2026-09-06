@@ -7,7 +7,11 @@ Implements the evaluation protocol from the base paper:
   - AUC (Area Under the ROC Curve)
   - Average Precision (AP)
   - Precision@K (P@K) for K ∈ {10, 50, 100}
+    - Recall@K and Hits@K for K ∈ {10, 50, 100}
   - NDCG@K for K ∈ {10, 50, 100}
+
+The evaluator currently represents one global ranked list of concept pairs,
+not multiple source-node queries. Query-level MRR is therefore not reported.
 
 Temporal split evaluation
 ─────────────────────────
@@ -43,6 +47,7 @@ logger = logging.getLogger(__name__)
 # Minimum test-set positives required to report meaningful metrics
 _MIN_TEST_POSITIVES = 3
 _DEFAULT_K_VALUES = [10, 50, 100]
+SUPPORTED_ABLATION_VARIANTS = {"full", "graph_only", "semantic_only"}
 
 # ─────────────────────────────────────────────────────────────
 # Optional scikit-learn import
@@ -73,7 +78,7 @@ def compute_metrics(
     k_values: list[int] = _DEFAULT_K_VALUES,
 ) -> dict:
     """
-    Compute AUC, AP, P@K, and NDCG@K for link predictions.
+    Compute AUC, AP, P@K, Recall@K, Hits@K, and NDCG@K for link predictions.
 
     Parameters
     ----------
@@ -83,7 +88,8 @@ def compute_metrics(
 
     Returns
     -------
-    dict with keys: auc, ap, precision_at_k, ndcg_at_k, sufficient_data
+    dict with keys: auc, ap, precision_at_k, recall_at_k, hits_at_k,
+    ndcg_at_k, sufficient_data
     """
     if not SKLEARN_AVAILABLE:
         return {
@@ -130,12 +136,16 @@ def compute_metrics(
     sorted_true = y_true[sorted_indices]
 
     precision_at_k: dict[str, float] = {}
+    recall_at_k: dict[str, float] = {}
+    hits_at_k: dict[str, float] = {}
     ndcg_at_k: dict[str, float] = {}
 
     for k in k_values:
         actual_k = min(k, len(sorted_true))
         top_k = sorted_true[:actual_k]
         precision_at_k[f"p@{k}"] = float(top_k.sum() / actual_k) if actual_k > 0 else 0.0
+        recall_at_k[f"recall@{k}"] = float(top_k.sum() / n_pos) if n_pos > 0 else 0.0
+        hits_at_k[f"hits@{k}"] = 1.0 if top_k.sum() > 0 else 0.0
 
         try:
             # ndcg_score expects 2D arrays
@@ -154,6 +164,8 @@ def compute_metrics(
         "auc": round(auc, 4),
         "ap": round(ap, 4),
         "precision_at_k": {k: round(v, 4) for k, v in precision_at_k.items()},
+        "recall_at_k": {k: round(v, 4) for k, v in recall_at_k.items()},
+        "hits_at_k": {k: round(v, 4) for k, v in hits_at_k.items()},
         "ndcg_at_k": {k: round(v, 4) for k, v in ndcg_at_k.items()},
         "n_positive": n_pos,
         "n_negative": n_neg,
@@ -164,6 +176,63 @@ def compute_metrics(
 # ─────────────────────────────────────────────────────────────
 # Baseline comparisons
 # ─────────────────────────────────────────────────────────────
+
+def semantic_similarity_scores(
+    all_pairs: list[tuple[str, str]],
+    concept_embeddings: dict[str, np.ndarray],
+) -> Optional[dict[tuple[str, str], float]]:
+    """Build semantic-only scores for an existing pair universe."""
+    if not concept_embeddings:
+        return None
+
+    scores: dict[tuple[str, str], float] = {}
+    for concept_a, concept_b in all_pairs:
+        embedding_a = concept_embeddings.get(concept_a)
+        embedding_b = concept_embeddings.get(concept_b)
+        if embedding_a is None or embedding_b is None:
+            scores[(concept_a, concept_b)] = 0.0
+            continue
+
+        norm_a = np.linalg.norm(embedding_a)
+        norm_b = np.linalg.norm(embedding_b)
+        if norm_a <= 1e-8 or norm_b <= 1e-8:
+            scores[(concept_a, concept_b)] = 0.0
+        else:
+            scores[(concept_a, concept_b)] = float(
+                np.dot(embedding_a, embedding_b) / (norm_a * norm_b)
+            )
+    return scores
+
+
+def run_evaluation_variant(
+    variant: str,
+    all_pairs: list[tuple[str, str]],
+    test_positives: set[tuple[str, str]],
+    graph_scores: dict[tuple[str, str], float],
+    setgn_scores: Optional[dict[tuple[str, str], float]] = None,
+    semantic_scores: Optional[dict[tuple[str, str], float]] = None,
+    k_values: list[int] = _DEFAULT_K_VALUES,
+) -> dict:
+    """Evaluate one component variant over a shared pair universe and labels."""
+    if variant not in SUPPORTED_ABLATION_VARIANTS:
+        raise ValueError(
+            f"Unsupported evaluation variant '{variant}'. "
+            f"Supported variants: {sorted(SUPPORTED_ABLATION_VARIANTS)}"
+        )
+
+    if variant == "full":
+        if setgn_scores is None:
+            raise ValueError("The full variant requires leakage-free SE-TGN scores.")
+        scores = setgn_scores
+    elif variant == "graph_only":
+        scores = graph_scores
+    else:
+        if semantic_scores is None:
+            raise ValueError("The semantic_only variant requires concept embeddings.")
+        scores = semantic_scores
+
+    predictions = {pair: scores.get(pair, 0.0) for pair in all_pairs}
+    return compute_metrics(predictions, test_positives, k_values)
 
 def baseline_random_scores(
     all_pairs: list[tuple[str, str]],

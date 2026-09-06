@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from unittest.mock import patch
 
@@ -126,6 +127,13 @@ class TestHistoryService:
             result = load_analysis("nonexistent_analysis_id")
             assert result is None
 
+    def test_invalid_analysis_id_is_rejected(self, tmp_path):
+        with patch("services.history_service._HISTORY_DIR", tmp_path):
+            from services.history_service import delete_analysis, load_analysis
+
+            assert load_analysis("..\\outside") is None
+            assert delete_analysis("..\\outside") is False
+
     def test_empty_history_returns_empty_list(self, tmp_path):
         with patch("services.history_service._HISTORY_DIR", tmp_path):
             from services.history_service import list_analyses
@@ -165,6 +173,20 @@ class TestHistoryService:
             stats = get_history_stats()
             assert stats["total_analyses"] == 2
             assert stats["total_papers_analyzed"] == 10  # 5 papers × 2 analyses
+
+    def test_save_analysis_avoids_timestamp_collision(self, tmp_path):
+        with patch("services.history_service._HISTORY_DIR", tmp_path), patch(
+            "services.history_service.datetime"
+        ) as datetime_mock:
+            datetime_mock.now.return_value = datetime(2026, 9, 6, 12, 0, 0, 123456)
+
+            from services.history_service import save_analysis
+
+            first_id = save_analysis(_make_sample_result())
+            second_id = save_analysis(_make_sample_result())
+
+            assert first_id != second_id
+            assert len(list(tmp_path.glob("analysis_*.json"))) == 2
 
     def test_saved_json_is_valid(self, tmp_path):
         """The saved file should be valid JSON with expected keys."""

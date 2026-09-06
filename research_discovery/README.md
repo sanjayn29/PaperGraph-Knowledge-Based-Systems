@@ -34,12 +34,12 @@ And extends it with **five novel research-oriented contributions** designed to e
 | **Temporal Dynamic Graph** | Base Methodology | Multi-year continuous event streams | Chronologically sorted `TemporalEvent` stream with `TemporalGraph` |
 | **SE-TGN Architecture** | Base Methodology | TGN with semantic message passing | PyTorch `NodeMemory` (GRU) + `TimeEncode` (Sinusoidal) + Link Classifier |
 | **CREF Rubric Evaluation** | Base Methodology | LLM scoring (Novelty, Impact, Plausibility, Interdisciplinarity) | Gemini-powered CREF prompt pipeline with normalized 1–5 scoring |
-| **GIC Insight Generation** | Base Methodology | Research direction, questions, hypotheses, roadmap | Gemini-powered structured hypotheses and validation roadmaps |
-| **Quantitative Benchmarking**| Base Methodology | AUC, AP, P@10, NDCG@10 metrics | `scikit-learn` baseline evaluator comparing Random, Graph, GCN, SE-TGN |
+| **GIC Insight Generation** | Base Methodology | Research direction, questions, and hypotheses | Gemini-powered structured insight generation with limitations |
+| **Quantitative Benchmarking**| Base Methodology | AUC, AP, P@10, Recall@10, Hits@10, NDCG@10 | `scikit-learn` evaluator comparing Random, Graph, GCN, and SE-TGN |
 | **1. Research Gap Detection**| 🌟 **Our Contribution** | ❌ Not in base paper | Multi-factor gap scoring (semantic, structural, temporal, cross-domain, novelty) |
 | **2. Evidence & Provenance** | 🌟 **Our Contribution** | ❌ Not in base paper | Complete citation traceability, graph topology proofs, and evidence strength |
 | **3. Human-in-the-Loop Rerank**| 🌟 **Our Contribution** | ❌ Static ranking only | Interactive feedback (👍 ⭐ 👎 🔖) + real-time personalized reranking without retraining |
-| **4. Cross-Domain Discovery**| 🌟 **Our Contribution** | ❌ Not in base paper | 11-discipline domain taxonomy, centroid embeddings, & synergy filtering |
+| **4. Cross-Domain Discovery**| 🌟 **Our Contribution** | ❌ Not in base paper | 10-domain taxonomy, centroid embeddings, & synergy filtering |
 | **5. Research Assistant** | 🌟 **Our Contribution** | ❌ Not in base paper | Context-grounded conversational agent with strict anti-hallucination guardrails |
 
 ---
@@ -47,33 +47,44 @@ And extends it with **five novel research-oriented contributions** designed to e
 ## 🏗️ End-to-End System Architecture
 
 ```
-                    EXISTING BASE PIPELINE
-                             │
-                             ▼
-                       Candidate Pool
-                             │
-              ┌──────────────┼───────────────┐
-              │              │               │
-              ▼              ▼               ▼
-      Research Gap      Cross-Domain     Evidence /
-       Detection         Discovery       Provenance
-              │              │               │
-              └──────────────┼───────────────┘
-                             ▼
-                    Candidate Enrichment
-                             │
-                             ▼
-                 CREF + GIC Existing Layer
-                             │
-                             ▼
-                  Human-in-the-Loop Ranking
-                             │
-                             ▼
-                Personalized Recommendations
-                             │
-                             ▼
-               Interactive Research Assistant
+                            Temporal Events
+                                  │
+                                  ▼
+                            Model Selection
+                            /              \
+                           ▼                ▼
+                        SE-TGN          GCN fallback
+                           │                │
+                           └───────┬────────┘
+                                  ▼
+                          Candidate Ranking
+                                  │
+                  ┌─────────────────┼─────────────────┐
+                  ▼                 ▼                 ▼
+            Research Gap       Cross-Domain       Evidence /
+             Detection          Discovery        Provenance
+                                  │
+                                  ▼
+                            Candidate Enrichment
+                                  │
+                                  ▼
+                              CREF + GIC
+                                  │
+                                  ▼
+                       Personalization and Assistant
 ```
+
+SE-TGN is the primary temporal model when active. The GCN is a separate,
+lightweight fallback/baseline; its output is not fed into SE-TGN.
+
+### Discovery and evaluation scope
+
+Normal discovery may use the complete uploaded corpus for candidate generation.
+The evaluation path is separate: SE-TGN is trained and scored using only the
+chronological training events, and held-out test events do not update its memory
+before prediction. Static graph evaluation and optional GCN evaluation use a
+graph built from training events only. Validation events are reserved by the
+temporal split but are not used for model selection.
 
 ---
 
@@ -83,6 +94,13 @@ And extends it with **five novel research-oriented contributions** designed to e
 Detects underexplored scientific gaps where concepts are semantically compatible and prominent, yet weakly connected in the literature:
 $$\text{ResearchGapScore} = 0.30 \cdot \text{Semantic} + 0.25 \cdot \text{Temporal} + 0.20 \cdot \text{Structural} + 0.15 \cdot \text{CrossDomain} + 0.10 \cdot \text{Novelty}$$
 
+### Concept Extraction (`services/concept_extractor.py`)
+Concepts are extracted with lightweight regex heuristics over each paper's title,
+abstract, and complete extracted full text. The existing stopword filtering,
+normalization, synonym mapping, and deduplication are applied afterward. This is
+not spaCy noun-phrase parsing, transformer NER, syntactic parsing, or a trained
+concept extraction model.
+
 ### 2. Evidence & Provenance System (`services/provenance.py`)
 Guarantees full traceability so no insight appears as an ungrounded LLM hallucination:
 * **Supporting Papers:** Direct co-occurrences and contextual mentions with exact titles, years, and authors.
@@ -90,18 +108,18 @@ Guarantees full traceability so no insight appears as an ungrounded LLM hallucin
 * **Evidence Strength:** Classified as `HIGH`, `MEDIUM`, or `EXPLORATORY`.
 
 ### 3. Human-in-the-Loop Personalized Ranking (`services/user_feedback.py`)
-Allows researchers to rate recommendations (👍 Useful, ⭐ High Value, 👎 Irrelevant, 🔖 Save, "Not My Area"):
+Allows researchers to rate recommendations (👍 Useful, ⭐ High Value, 👎 Irrelevant, 🔖 Save):
 $$\text{PersonalizedScore} = 0.70 \cdot \text{OriginalScore} + 0.15 \cdot \text{UserPreferenceScore} + 0.15 \cdot \text{FeedbackSimilarityScore}$$
 Maintains a local researcher profile and displays rank movements (e.g. `#7` $\rightarrow$ `#2`, ▲ +5).
 
 ### 4. Cross-Domain Discovery (`services/domain_analyzer.py`)
-Classifies concepts into 11 scientific disciplines using keyword anchors and dense centroid embeddings:
+Classifies concepts into 10 scientific domains using keyword anchors and dense centroid embeddings:
 $$\text{CrossDomainScore} = 0.40 \cdot \text{DomainDistance} + 0.30 \cdot \text{SemanticCompatibility} + 0.20 \cdot \text{GapScore} + 0.10 \cdot \text{TemporalEmergence}$$
 Enables filtering by specific discipline pairs (e.g. `AI ↔ Healthcare`, `AI ↔ Biology`).
 
 ### 5. Interactive Research Assistant (`services/research_assistant.py`)
 A conversational assistant grounded in the current analysis session:
-* Answers queries regarding recommendation rationales, supporting papers, gaps, and validation roadmaps.
+* Answers queries regarding recommendation rationales, supporting papers, gaps, and research questions.
 * **Anti-Hallucination Guardrail:** Explicitly states *"I could not find sufficient evidence in the uploaded research corpus"* when questions exceed corpus evidence.
 
 ---
@@ -137,7 +155,7 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 🧪 Unit Testing Suite
 
-The repository includes **107 passing unit tests** covering all base modules and the 5 extensions:
+The repository includes **130 passing tests** covering all base modules and the 5 extensions:
 
 ```bash
 python -m pytest tests/ -v
@@ -153,7 +171,7 @@ tests/test_history_compatibility.py ... [PASS]
 tests/test_temporal_graph.py .......... [PASS]
 tests/test_se_tgn.py .................. [PASS]
 tests/test_evaluator.py ............... [PASS]
-============================= 107 passed in 18.0s =============================
+============================= 130 passed =============================
 ```
 
 ---
@@ -166,14 +184,14 @@ research_discovery/
 ├── requirements.txt                # Core and optional dependencies
 ├── services/
 │   ├── pdf_processor.py            # PDF ingestion & metadata extraction
-│   ├── concept_extractor.py        # Regex noun phrase concept extraction
+│   ├── concept_extractor.py        # Heuristic regex extraction over complete extracted text
 │   ├── embeddings.py               # all-MiniLM-L6-v2 dense embeddings
 │   ├── graph_builder.py            # NetworkX co-occurrence graph builder
 │   ├── temporal_graph.py           # Temporal event stream & train/val/test splits
 │   ├── se_tgn.py                   # PyTorch SE-TGN temporal network
 │   ├── gnn_model.py                # Optional GCN structural baseline
 │   ├── graph_analyzer.py           # 3-tier candidate scoring formula
-│   ├── domain_analyzer.py          # [EXTENSION] 11-domain taxonomy & cross-domain engine
+│   ├── domain_analyzer.py          # [EXTENSION] 10-domain taxonomy & cross-domain engine
 │   ├── research_gap_detector.py    # [EXTENSION] Underexplored research gap detector
 │   ├── provenance.py               # [EXTENSION] Citation & graph evidence tracker
 │   ├── user_feedback.py            # [EXTENSION] Human-in-the-loop personalized reranker
@@ -182,5 +200,5 @@ research_discovery/
 │   ├── evaluator.py                # Formal quantitative benchmarks
 │   ├── analysis_pipeline.py        # End-to-end orchestration pipeline
 │   └── history_service.py          # Backward-compatible JSON history persistence
-└── tests/                          # 107 automated unit tests
+└── tests/                          # 130 automated tests
 ```

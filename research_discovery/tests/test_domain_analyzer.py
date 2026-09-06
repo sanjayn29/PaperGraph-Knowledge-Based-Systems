@@ -85,3 +85,33 @@ def test_extract_cross_domain_discoveries():
     assert len(discoveries) == 1
     assert discoveries[0]["concept_a"] == "Graph Neural Network"
     assert discoveries[0]["concept_b"] == "Drug Discovery"
+
+
+def test_extract_cross_domain_discoveries_handles_missing_setgn_score():
+    concept_domains = {
+        "Graph Neural Network": {"domain": "Artificial Intelligence"},
+        "Drug Discovery": {"domain": "Chemistry & Materials"},
+    }
+    base_candidate = {
+        "concept_a": "Graph Neural Network",
+        "concept_b": "Drug Discovery",
+        "semantic_similarity": 0.85,
+        "candidate_score": 0.88,
+    }
+
+    missing_score = extract_cross_domain_discoveries(
+        [base_candidate], concept_domains, min_cross_domain_score=0.0
+    )
+    explicit_none = extract_cross_domain_discoveries(
+        [{**base_candidate, "setgn_score": None}],
+        concept_domains,
+        min_cross_domain_score=0.0,
+    )
+    numeric_score = extract_cross_domain_discoveries(
+        [{**base_candidate, "setgn_score": 0.9}],
+        concept_domains,
+        min_cross_domain_score=0.0,
+    )
+
+    assert missing_score[0]["cross_domain_score"] == explicit_none[0]["cross_domain_score"]
+    assert numeric_score[0]["cross_domain_score"] != explicit_none[0]["cross_domain_score"]

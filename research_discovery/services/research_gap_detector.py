@@ -43,19 +43,27 @@ def compute_temporal_emergence(
     Compute the temporal emergence score based on the recency and growth of concepts
     in the temporal event stream. Returns a normalized float [0.0, 1.0].
     """
-    if temporal_graph is None or temporal_graph.is_empty:
+    if temporal_graph is None or temporal_graph.is_empty():
         return 0.5
 
-    years = temporal_graph.year_range
-    if years[0] == 0:
+    years = temporal_graph.year_range()
+    if years[0] is None:
         return 0.5
 
     min_yr, max_yr = years
     year_span = max(1, max_yr - min_yr)
 
     # Find events for concept_a and concept_b
-    events_a = [e.timestamp for e in temporal_graph.events if e.source == concept_a or e.target == concept_a]
-    events_b = [e.timestamp for e in temporal_graph.events if e.source == concept_b or e.target == concept_b]
+    events_a = [
+        e.timestamp
+        for e in temporal_graph.events
+        if e.source_concept == concept_a or e.target_concept == concept_a
+    ]
+    events_b = [
+        e.timestamp
+        for e in temporal_graph.events
+        if e.source_concept == concept_b or e.target_concept == concept_b
+    ]
 
     if not events_a or not events_b:
         return 0.4

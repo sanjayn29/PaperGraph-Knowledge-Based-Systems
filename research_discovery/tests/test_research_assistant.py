@@ -5,10 +5,12 @@ Unit tests for interactive research assistant context formatting and fallback lo
 """
 
 import pytest
+from unittest.mock import patch
 from services.research_assistant import (
     build_assistant_context,
     query_research_assistant,
     PRESET_QUESTIONS,
+    _fallback_assistant_response,
 )
 
 
@@ -49,11 +51,46 @@ def test_fallback_research_assistant():
         },
     }
 
-    # Deterministic answer for "why recommended?"
-    ans_why = query_research_assistant(PRESET_QUESTIONS["why_recommended"], mock_result)
-    assert "GNN + Healthcare" in ans_why
-    assert "Candidate Score" in ans_why
+    class OfflineLLM:
+        is_available = False
 
-    # Deterministic answer for research questions
-    ans_rq = query_research_assistant(PRESET_QUESTIONS["research_questions"], mock_result)
-    assert "EHR graphs" in ans_rq
+    with patch("services.llm_service.LLMService", return_value=OfflineLLM()):
+        # Deterministic answer for "why recommended?"
+        ans_why = query_research_assistant(PRESET_QUESTIONS["why_recommended"], mock_result)
+        assert "GNN + Healthcare" in ans_why
+        assert "Candidate Score" in ans_why
+
+        # Deterministic answer for research questions
+        ans_rq = query_research_assistant(PRESET_QUESTIONS["research_questions"], mock_result)
+        assert "EHR graphs" in ans_rq
+
+
+def test_fallback_supporting_papers_uses_relevant_concepts():
+    mock_result = {
+        "papers": [
+            {"paper_id": "p1", "title": "GNN Healthcare", "year": 2024, "concepts": ["GNN", "Healthcare"]},
+            {"paper_id": "p2", "title": "Unrelated Paper", "year": 2024, "concepts": ["Physics"]},
+        ],
+        "candidates": [{"concept_a": "GNN", "concept_b": "Healthcare"}],
+    }
+
+    answer = _fallback_assistant_response("Which papers support this?", mock_result)
+
+    assert "GNN Healthcare" in answer
+    assert "Unrelated Paper" not in answer
+
+
+def test_fallback_supporting_papers_does_not_use_arbitrary_corpus_papers():
+    mock_result = {
+        "papers": [
+            {"paper_id": "p1", "title": "First Unrelated Paper", "concepts": ["Physics"]},
+            {"paper_id": "p2", "title": "Second Unrelated Paper", "concepts": ["Biology"]},
+        ],
+        "candidates": [{"concept_a": "GNN", "concept_b": "Healthcare"}],
+    }
+
+    answer = _fallback_assistant_response("Which papers support this?", mock_result)
+
+    assert "No supporting papers were identified" in answer
+    assert "First Unrelated Paper" not in answer
+    assert "Second Unrelated Paper" not in answer

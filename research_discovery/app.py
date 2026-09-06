@@ -434,7 +434,7 @@ def page_home():
             <div class='feature-card'>
                 <div class='feature-icon'>📈</div>
                 <div class='feature-title'>Evaluation Metrics</div>
-                <div class='feature-desc'>AUC, Average Precision, P@K, and NDCG@K computed across baselines (Random, Graph, GCN, SE-TGN) when sufficient temporal data exists.</div>
+                <div class='feature-desc'>AUC, Average Precision, P@K, Recall@K, Hits@K, and NDCG@K computed across baselines when sufficient temporal data exists.</div>
             </div>
         </div>
         """,
@@ -774,6 +774,7 @@ def _render_result(result: dict):
             personalized_candidates=personalized_candidates,
             mode=result.get("analysis_mode", ""),
             concept_domains=concept_domains,
+            context_id=result.get("created_at"),
         )
 
     # ── Tab 3: Research Gaps ──────────────────────────────────
@@ -921,6 +922,7 @@ def _render_candidates_and_personalization(
     personalized_candidates: list,
     mode: str,
     concept_domains: dict,
+    context_id: str = None,
 ):
     """Render candidate connections with interactive Human-in-the-Loop feedback and personalized reranking."""
     from services.user_feedback import record_feedback, get_user_profile_summary
@@ -945,7 +947,7 @@ def _render_candidates_and_personalization(
         return
 
     # Profile summary metrics
-    stats = get_user_profile_summary()
+    stats = get_user_profile_summary(context_id)
     if stats["total_feedbacks"] > 0 and "Personalized" in ranking_view:
         st.info(
             f"🧠 **Personalized Layer Active:** {stats['total_feedbacks']} ratings recorded. "
@@ -1004,22 +1006,22 @@ def _render_candidates_and_personalization(
         c1, c2, c3, c4, c5 = st.columns([1, 1, 1, 1, 2])
         with c1:
             if st.button("👍 Useful", key=f"fb_int_{i}_{cand_id}"):
-                record_feedback(cand_id, ca, cb, "interesting", dom_a, dom_b)
+                record_feedback(cand_id, ca, cb, "interesting", dom_a, dom_b, context_id=context_id)
                 st.success("Feedback recorded! Rerank will reflect this.")
                 st.rerun()
         with c2:
             if st.button("⭐ High Value", key=f"fb_star_{i}_{cand_id}"):
-                record_feedback(cand_id, ca, cb, "highly_relevant", dom_a, dom_b)
+                record_feedback(cand_id, ca, cb, "highly_relevant", dom_a, dom_b, context_id=context_id)
                 st.success("Marked as High Value!")
                 st.rerun()
         with c3:
             if st.button("👎 Irrelevant", key=f"fb_not_{i}_{cand_id}"):
-                record_feedback(cand_id, ca, cb, "not_relevant", dom_a, dom_b)
+                record_feedback(cand_id, ca, cb, "not_relevant", dom_a, dom_b, context_id=context_id)
                 st.info("Downvoted candidate.")
                 st.rerun()
         with c4:
             if st.button("🔖 Save", key=f"fb_save_{i}_{cand_id}"):
-                record_feedback(cand_id, ca, cb, "saved", dom_a, dom_b)
+                record_feedback(cand_id, ca, cb, "saved", dom_a, dom_b, context_id=context_id)
                 st.success("Saved to favorites.")
                 st.rerun()
         with c5:
@@ -1526,7 +1528,7 @@ def _render_temporal_graph(result: dict):
 
 
 def _render_evaluation(result: dict):
-    """Render the Model Evaluation tab with AUC/AP/P@K/NDCG@K metrics."""
+    """Render the Model Evaluation tab with the available ranking metrics."""
     eval_result = result.get("evaluation", {})
 
     st.markdown("### 📈 Model Evaluation")
@@ -1595,10 +1597,14 @@ def _render_evaluation(result: dict):
                 "AP": "–",
                 "P@10": "–",
                 "NDCG@10": "–",
+                "Recall@10": "–",
+                "Hits@10": "–",
                 "Note": metrics.get("message", "Insufficient data"),
             }
         else:
             pk = metrics.get("precision_at_k", {})
+            rk = metrics.get("recall_at_k", {})
+            hk = metrics.get("hits_at_k", {})
             nk = metrics.get("ndcg_at_k", {})
             is_setgn = baseline_name == "SE-TGN"
             row = {
@@ -1606,6 +1612,8 @@ def _render_evaluation(result: dict):
                 "AUC": f"{metrics['auc']:.4f}",
                 "AP": f"{metrics['ap']:.4f}",
                 "P@10": f"{pk.get('p@10', 0):.4f}",
+                "Recall@10": f"{rk.get('recall@10', 0):.4f}",
+                "Hits@10": f"{hk.get('hits@10', 0):.4f}",
                 "NDCG@10": f"{nk.get('ndcg@10', 0):.4f}",
                 "Note": "",
             }
@@ -1720,7 +1728,7 @@ def _render_technical_details(result: dict):
         |---|---|
         | Trained temporal GNN (SE-TGN) on thousands of papers | NetworkX graph metrics on 5–10 PDFs |
         | Multi-year event streams | Single snapshot co-occurrence graph |
-        | Validated on AUC/AP/P@K/NDCG@K | No formal validation |
+        | Evaluated with AUC/AP/P@K/Recall@K/Hits@K/NDCG@K | No publication-grade validation |
         | Top-N from a large corpus | Top-3 from a tiny local graph |
         
         Results here are **exploratory only** and have not been evaluated against real future links.
@@ -1871,8 +1879,8 @@ def page_about():
         | Component | Category | Base Paper (KBS 2025) | PaperGraph (Our Extension) |
         |---|---|---|---|
         | **SE-TGN & Temporal Graph** | Base Methodology | Trained on thousands of timestamped papers | Continuous GRU `NodeMemory` + `TimeEncode` on user corpus |
-        | **CREF & GIC** | Base Methodology | Multi-dimension rubric + hypothesis generation | Gemini-powered CREF scores & GIC research roadmap |
-        | **Quantitative Evaluation** | Base Methodology | AUC, AP, P@10, NDCG@10 metrics | `scikit-learn` baseline evaluator comparing Random, Graph, GCN, SE-TGN |
+        | **CREF & GIC** | Base Methodology | Multi-dimension rubric + hypothesis generation | Gemini-powered CREF scores & structured insight generation |
+        | **Quantitative Evaluation** | Base Methodology | AUC, AP, P@10, Recall@10, Hits@10, NDCG@10 | `scikit-learn` evaluator comparing Random, Graph, GCN, and SE-TGN |
         | **1. Research Gap Detection** | 🌟 **Our Contribution** | Not implemented | Multi-factor gap scoring (semantic, structural, temporal, cross-domain) |
         | **2. Evidence / Provenance** | 🌟 **Our Contribution** | Not implemented | Traceable paper citations, graph topology evidence, and strength scores |
         | **3. Human-in-the-Loop Feedback**| 🌟 **Our Contribution** | Static ranking only | Interactive ratings (👍 ⭐ 👎 🔖) + real-time personalized reranking |

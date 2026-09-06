@@ -13,6 +13,7 @@ Tests:
 
 from __future__ import annotations
 
+import numpy as np
 import pytest
 
 from services.evaluator import (
@@ -20,7 +21,9 @@ from services.evaluator import (
     all_concept_pairs,
     baseline_random_scores,
     compute_metrics,
+    run_evaluation_variant,
     run_baseline_comparison,
+    semantic_similarity_scores,
 )
 
 pytestmark = pytest.mark.skipif(
@@ -140,6 +143,131 @@ def test_compute_metrics_k_values():
     if result["sufficient_data"]:
         assert "p@5" in result["precision_at_k"]
         assert "ndcg@5" in result["ndcg_at_k"]
+
+
+def test_compute_metrics_recall_and_hits_at_k():
+    predictions = {
+        ("N0", "N0"): 1.00,
+        ("P0", "P0"): 0.90,
+        ("N1", "N1"): 0.80,
+        ("P1", "P1"): 0.70,
+        ("N2", "N2"): 0.60,
+        ("N3", "N3"): 0.50,
+        ("N4", "N4"): 0.40,
+        ("N5", "N5"): 0.30,
+        ("N6", "N6"): 0.20,
+        ("N7", "N7"): 0.10,
+        ("P2", "P2"): 0.09,
+        ("P3", "P3"): 0.08,
+        ("P4", "P4"): 0.07,
+    }
+    positives = {(f"P{i}", f"P{i}") for i in range(5)}
+
+    result = compute_metrics(predictions, positives)
+
+    assert result["recall_at_k"]["recall@10"] == 0.4
+    assert result["recall_at_k"]["recall@50"] == 1.0
+    assert result["recall_at_k"]["recall@100"] == 1.0
+    assert result["hits_at_k"]["hits@10"] == 1.0
+    assert result["hits_at_k"]["hits@50"] == 1.0
+    assert result["hits_at_k"]["hits@100"] == 1.0
+    assert "mrr" not in result
+
+
+def test_compute_metrics_recall_and_hits_edge_cases():
+    predictions = {
+        ("P0", "P0"): 0.9,
+        ("P1", "P1"): 0.8,
+        ("P2", "P2"): 0.7,
+        ("P3", "P3"): 0.6,
+        ("P4", "P4"): 0.5,
+        ("N0", "N0"): 0.1,
+        ("N1", "N1"): 0.0,
+    }
+    positives = {(f"P{i}", f"P{i}") for i in range(5)}
+
+    result = compute_metrics(predictions, positives, k_values=[10])
+
+    assert result["recall_at_k"]["recall@10"] == 1.0
+    assert result["hits_at_k"]["hits@10"] == 1.0
+
+    no_positive_result = compute_metrics(predictions, set())
+    assert no_positive_result["sufficient_data"] is False
+
+
+def test_evaluation_variants_share_pairs_and_labels():
+    pairs = [(f"c{i}", f"d{i}") for i in range(6)]
+    positives = {pairs[0], pairs[1], pairs[2]}
+    graph_scores = {pair: 0.8 - index * 0.05 for index, pair in enumerate(pairs)}
+    semantic_scores = {pair: 0.7 - index * 0.04 for index, pair in enumerate(pairs)}
+    setgn_scores = {pair: 0.6 - index * 0.03 for index, pair in enumerate(pairs)}
+
+    results = {
+        variant: run_evaluation_variant(
+            variant=variant,
+            all_pairs=pairs,
+            test_positives=positives,
+            graph_scores=graph_scores,
+            semantic_scores=semantic_scores,
+            setgn_scores=setgn_scores,
+        )
+        for variant in ("full", "graph_only", "semantic_only")
+    }
+
+    assert all(result["sufficient_data"] for result in results.values())
+    assert {result["n_positive"] for result in results.values()} == {3}
+    assert {result["n_negative"] for result in results.values()} == {3}
+    assert {result["n_total"] for result in results.values()} == {6}
+
+
+def test_unsupported_se_tgn_ablation_is_rejected():
+    with pytest.raises(ValueError, match="Unsupported evaluation variant"):
+        run_evaluation_variant(
+            variant="setgn_without_temporal",
+            all_pairs=[],
+            test_positives=set(),
+            graph_scores={},
+        )
+
+
+def test_semantic_scores_use_only_concept_embeddings():
+    pairs = [("A", "B"), ("A", "C"), ("B", "C")]
+    embeddings = {
+        "A": np.array([1.0, 0.0]),
+        "B": np.array([1.0, 0.0]),
+        "C": np.array([0.0, 1.0]),
+    }
+
+    scores = semantic_similarity_scores(pairs, embeddings)
+
+    assert scores[("A", "B")] == 1.0
+    assert scores[("A", "C")] == 0.0
+    assert scores[("B", "C")] == 0.0
+
+
+def test_semantic_variant_ignores_graph_and_setgn_scores():
+    pairs = [(f"c{i}", f"d{i}") for i in range(6)]
+    positives = {pairs[0], pairs[1], pairs[2]}
+    semantic_scores = {pair: 1.0 - index * 0.1 for index, pair in enumerate(pairs)}
+
+    result_a = run_evaluation_variant(
+        variant="semantic_only",
+        all_pairs=pairs,
+        test_positives=positives,
+        graph_scores={pair: 0.0 for pair in pairs},
+        setgn_scores={pair: 0.0 for pair in pairs},
+        semantic_scores=semantic_scores,
+    )
+    result_b = run_evaluation_variant(
+        variant="semantic_only",
+        all_pairs=pairs,
+        test_positives=positives,
+        graph_scores={pair: 100.0 for pair in pairs},
+        setgn_scores={pair: 100.0 for pair in pairs},
+        semantic_scores=semantic_scores,
+    )
+
+    assert result_a == result_b
 
 
 # ─────────────────────────────────────────────────────────────
