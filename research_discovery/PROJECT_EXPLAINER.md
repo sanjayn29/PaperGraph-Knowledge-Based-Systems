@@ -163,5 +163,5 @@ PaperGraph includes **130 automated tests** verifying all mathematical models an
 python -m pytest tests/ -v
 ```
 ```
-============================= 130 passed =============================
+============================= 138 passed =============================
 ```

@@ -149,6 +149,14 @@ class TestGraphSummary:
         assert summary["edge_count"] == 0
 
 
+def test_per_paper_graph_contribution_counts_pairs():
+    from services.graph_builder import paper_graph_contribution_stats
+
+    stats = paper_graph_contribution_stats(_make_papers())
+    assert stats[0]["unique_concepts"] == 3
+    assert stats[0]["generated_pairs"] == 3
+
+
 # ─────────────────────────────────────────────────────────────
 # Graph Analyzer Tests
 # ─────────────────────────────────────────────────────────────
@@ -225,3 +233,29 @@ class TestRankCandidates:
         # At least some semantic similarity should be non-zero
         sem_sims = [c["semantic_similarity"] for c in candidates]
         assert any(s > 0 for s in sem_sims)
+
+    def test_setgn_formula_uses_temporal_score_and_preserves_gcn_signal(self):
+        papers = _make_papers()
+        G = build_graph(papers)
+        pairs = [("Bioinformatics", "Large Language Model")]
+        candidates = rank_candidates(
+            G,
+            {},
+            gnn_scores={pairs[0]: 0.9},
+            setgn_scores={pairs[0]: 0.8},
+            exclude_strong_edges=False,
+        )
+
+        candidate = next(c for c in candidates if {c["concept_a"], c["concept_b"]} == set(pairs[0]))
+        assert candidate["gnn_active"] is True
+        assert candidate["setgn_active"] is True
+        assert candidate["gnn_score"] == 0.9
+        assert candidate["setgn_score"] == 0.8
+        expected_score = round(
+            0.50 * candidate["setgn_score"]
+            + 0.30 * candidate["graph_score"]
+            + 0.20 * candidate["semantic_similarity"],
+            4,
+        )
+        assert candidate["candidate_score"] == expected_score
+        assert "0.50" in candidate["ranking_formula"]

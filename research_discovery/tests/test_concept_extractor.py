@@ -74,3 +74,50 @@ def test_rejects_sentence_starters_and_reference_names():
 
     assert "Retrieval-Augmented Generation" in concepts
     assert not {"This", "Our", "Finally", "Zhang", "Chen", "Journal"} & set(concepts)
+
+
+def test_rejects_pdf_methodology_and_layout_fragments():
+    paper = {
+        "title": "Graph Neural Networks",
+        "abstract": "Natural Language Processing with Retrieval-Augmented Generation.",
+        "full_text": (
+            "Introduction Retrieval End-To-End Mini-Batch Feed-Forward Element-Wise\n"
+            "See Appendix Rouge-L Two-Layer Left-To-Right State-Of-The-Art\n"
+            "Temporal Graph Networks remain useful scientific concepts.\n"
+        ),
+    }
+
+    concepts = extract_concepts_from_paper(paper)
+
+    assert "Natural Language Processing" in concepts
+    assert "Retrieval-Augmented Generation" in concepts
+    assert "Temporal Graph Network" in concepts
+    assert not {
+        "Introduction Retrieval", "End-To-End", "Mini-Batch", "Feed-Forward",
+        "Element-Wise", "See Appendix", "Rouge-L", "Two-Layer",
+        "Left-To-Right", "State-Of-The-Art",
+    } & set(concepts)
+
+
+def test_rejects_observed_venue_and_malformed_pdf_terms():
+    paper = {
+        "title": "Natural Language Processing for Graphs",
+        "abstract": "Large Language Models and Long Short-Term Memory.",
+        "full_text": (
+            "Arxiv Gpu Usa Lstms\n"
+            "Long Beach Neural Information Processing Systems\n"
+            "See Section Computer Science Experiments We\n"
+            "Retrieval-Augmented Generation remains useful.\n"
+        ),
+    }
+
+    concepts = extract_concepts_from_paper(paper)
+
+    assert "Large Language Model" in concepts
+    assert "Long Short-Term Memory" in concepts
+    assert "Retrieval-Augmented Generation" in concepts
+    assert not {
+        "Arxiv", "Gpu", "Usa", "Lstms", "Long Beach",
+        "Neural Information Processing Systems", "See Section",
+        "Computer Science", "Experiments We",
+    } & set(concepts)

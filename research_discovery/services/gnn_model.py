@@ -5,7 +5,7 @@ Optional lightweight GNN encoder component for PaperGraph.
 
 Role in the pipeline
 --------------------
-Provides an ADDITIONAL scoring signal analogous (in spirit only) to the
+Provides an independent GCN baseline scoring signal analogous (in spirit only) to the
 graph encoder inside SE-TGN from the base paper. This is NOT a trained
 temporal GNN — it is a small 2-layer GCN/GAT that runs a single forward
 pass over the concept co-occurrence graph to produce node representations.
@@ -14,7 +14,7 @@ These are used only as an extra signal; the system works without them.
 Important caveats (displayed in the UI's Technical Details section):
 - No training corpus, no training loop — this is a lightweight structural
   encoder, not a validated link-prediction model.
-- The GNN component is inactive when:
+- The separate GCN baseline is inactive when:
     (a) PyTorch or PyTorch Geometric is not installed
     (b) The graph has fewer than MIN_NODES_FOR_GNN nodes
     (c) Any runtime error occurs during the forward pass
@@ -51,17 +51,17 @@ try:
         from torch_geometric.nn import GCNConv, GATConv
 
         GNN_AVAILABLE = True
-        logger.info("PyTorch Geometric available — GNN component ACTIVE.")
+        logger.info("PyTorch Geometric available — separate GCN baseline ACTIVE.")
     except ImportError:
         GNN_AVAILABLE = False
         logger.info(
-            "torch_geometric not installed — GNN component INACTIVE. "
+            "torch_geometric not installed — separate GCN baseline INACTIVE. "
             "Install with: pip install torch-geometric"
         )
 except ImportError:
     GNN_AVAILABLE = False
     logger.info(
-        "PyTorch not installed — GNN component INACTIVE. "
+        "PyTorch not installed — separate GCN baseline INACTIVE. "
         "Install with: pip install torch"
     )
 
@@ -88,11 +88,14 @@ if GNN_AVAILABLE:
             super().__init__()
             self.conv1 = GCNConv(in_channels, hidden_dim)
             self.conv2 = GCNConv(hidden_dim, hidden_dim)
+            # Preserve node-specific features on dense graphs where repeated
+            # message passing otherwise makes all node embeddings nearly equal.
+            self.input_skip = nn.Linear(in_channels, hidden_dim)
 
         def forward(self, x, edge_index):  # type: ignore[override]
-            x = F.relu(self.conv1(x, edge_index))
+            x = F.relu(self.conv1(x, edge_index) + self.input_skip(x))
             x = F.dropout(x, p=0.3, training=self.training)
-            x = self.conv2(x, edge_index)
+            x = self.conv2(x, edge_index) + x
             return x
 
 
@@ -123,7 +126,7 @@ def compute_gnn_scores(
 
     if n < MIN_NODES_FOR_GNN:
         logger.info(
-            "Graph has %d nodes (< %d) — GNN component INACTIVE for this analysis.",
+            "Graph has %d nodes (< %d) — separate GCN baseline INACTIVE for this analysis.",
             n,
             MIN_NODES_FOR_GNN,
         )
@@ -145,6 +148,7 @@ def _run_gcn(
     import torch  # local re-import to satisfy type checkers
 
     n = len(nodes)
+    torch.manual_seed(42)
     node_index = {node: i for i, node in enumerate(nodes)}
 
     # ── Node features ──────────────────────────────────────────
@@ -215,16 +219,30 @@ def _run_gcn(
     return scores
 
 
+def summarize_gnn_scores(scores: Optional[dict[tuple[str, str], float]]) -> dict[str, float]:
+    """Return descriptive statistics for the independent GCN pair scores."""
+    if not scores:
+        return {key: 0.0 for key in ("min", "max", "mean", "median", "std")}
+    values = np.asarray(list(scores.values()), dtype=float)
+    return {
+        "min": round(float(np.min(values)), 6),
+        "max": round(float(np.max(values)), 6),
+        "mean": round(float(np.mean(values)), 6),
+        "median": round(float(np.median(values)), 6),
+        "std": round(float(np.std(values)), 6),
+    }
+
+
 def gnn_status_label(G: Optional[nx.Graph] = None) -> str:
     """
     Return a human-readable label for the current GNN (GCN baseline) status.
     Used by the UI to label the analysis mode.
     """
     if not GNN_AVAILABLE:
-        return "Lightweight Graph Analysis (GCN inactive — PyTorch/PyG not installed)"
+        return "Lightweight Graph Analysis (separate GCN baseline inactive — PyTorch/PyG not installed)"
     if G is not None and G.number_of_nodes() < MIN_NODES_FOR_GNN:
-        return f"Lightweight Graph Analysis (GCN inactive — graph too small: {G.number_of_nodes()} nodes < {MIN_NODES_FOR_GNN})"
-    return "Lightweight GNN-based Graph Analysis"
+        return f"Lightweight Graph Analysis (separate GCN baseline inactive — graph too small: {G.number_of_nodes()} nodes < {MIN_NODES_FOR_GNN})"
+    return "Lightweight Analysis with Independent GCN Baseline"
 
 
 # ─────────────────────────────────────────────────────────────

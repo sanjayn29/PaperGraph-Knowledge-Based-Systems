@@ -157,7 +157,8 @@ def _generate_explanation(
     return (
         f"'{concept_a}' and '{concept_b}' exhibit high semantic compatibility ({semantic_score:.2f}) "
         f"and represent {domain_str}, yet have {conn_str}. "
-        f"This indicates an underexplored research frontier with a gap score of {gap_score:.2f}."
+        f"This is a candidate research gap within the uploaded corpus with a gap score of {gap_score:.2f}; "
+        "it is not a scientifically validated gap."
     )
 
 
@@ -232,7 +233,7 @@ def detect_research_gaps(
                 ca, cb, dom_a, dom_b, existing_conn, semantic_sim, gap_score
             )
 
-            status = "highly_promising" if gap_score >= 0.75 else "underexplored"
+            status = "high_potential_candidate" if gap_score >= 0.75 else "candidate_gap"
 
             gaps.append({
                 "gap_id": f"gap_{idx + 1:03d}",

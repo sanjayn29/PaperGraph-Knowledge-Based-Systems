@@ -249,6 +249,7 @@ def run_baseline_comparison(
     graph_scores: dict[tuple[str, str], float],
     gnn_scores: Optional[dict[tuple[str, str], float]],
     setgn_scores: Optional[dict[tuple[str, str], float]],
+    semantic_scores: Optional[dict[tuple[str, str], float]] = None,
     k_values: list[int] = _DEFAULT_K_VALUES,
 ) -> dict:
     """
@@ -278,10 +279,14 @@ def run_baseline_comparison(
     graph_pred = {p: graph_scores.get(p, 0.0) for p in all_pairs}
     results["Static Graph"] = compute_metrics(graph_pred, test_positives, k_values)
 
+    if semantic_scores is not None:
+        semantic_pred = {p: semantic_scores.get(p, 0.0) for p in all_pairs}
+        results["Semantic-only"] = compute_metrics(semantic_pred, test_positives, k_values)
+
     # GCN baseline (optional)
     if gnn_scores is not None:
         gnn_pred = {p: gnn_scores.get(p, 0.0) for p in all_pairs}
-        results["GCN (untrained)"] = compute_metrics(gnn_pred, test_positives, k_values)
+        results["Independent GCN"] = compute_metrics(gnn_pred, test_positives, k_values)
 
     # SE-TGN (the main model)
     if setgn_scores is not None:

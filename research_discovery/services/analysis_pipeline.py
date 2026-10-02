@@ -30,9 +30,25 @@ import logging
 from datetime import datetime
 from typing import Callable, Optional
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 _TOTAL_STEPS = 9  # visible steps shown in the UI progress bar
+
+
+def _distribution(values) -> dict[str, float]:
+    """Return descriptive statistics for diagnostic score collections."""
+    array = np.asarray(list(values), dtype=float)
+    if array.size == 0:
+        return {key: 0.0 for key in ("min", "max", "mean", "median", "std")}
+    return {
+        "min": round(float(array.min()), 6),
+        "max": round(float(array.max()), 6),
+        "mean": round(float(array.mean()), 6),
+        "median": round(float(np.median(array)), 6),
+        "std": round(float(array.std()), 6),
+    }
 
 
 def run_pipeline(
@@ -145,11 +161,12 @@ def run_pipeline(
         # ── Step 4: Knowledge Graph ───────────────────────────────
         _progress(4, "🕸️ Building knowledge graph…")
 
-        from services.graph_builder import build_graph, graph_summary
+        from services.graph_builder import build_graph, graph_summary, paper_graph_contribution_stats
 
         G = build_graph(papers)
         result["relationship_count"] = G.number_of_edges()
         result["graph_summary"] = graph_summary(G)
+        result.setdefault("diagnostics", {})["paper_graph_contributions"] = paper_graph_contribution_stats(papers)
 
         if G.number_of_nodes() < 2:
             result["error"] = (
@@ -170,7 +187,7 @@ def run_pipeline(
         # ── Step 6 & 7: SE-TGN Training + Link Prediction ─────────
         _progress(6, "🧬 Training SE-TGN temporal model…")
 
-        from services.se_tgn import compute_setgn_scores, setgn_status_label, SETGN_AVAILABLE
+        from services.se_tgn import compute_setgn_score_diagnostics, setgn_status_label, SETGN_AVAILABLE
 
         setgn_scores = None
         prediction_time = None
@@ -180,11 +197,22 @@ def run_pipeline(
             if y_max:
                 prediction_time = y_max + 1
 
-            setgn_scores = compute_setgn_scores(
+            discovery_setgn_diagnostics = compute_setgn_score_diagnostics(
                 temporal_graph,
                 concept_embeddings,
-                query_time=prediction_time,
             )
+            setgn_scores = (
+                discovery_setgn_diagnostics["scores"]
+                if discovery_setgn_diagnostics else None
+            )
+            result.setdefault("diagnostics", {})["discovery_se_tgn"] = {
+                "logit_distribution": _distribution(
+                    (discovery_setgn_diagnostics or {}).get("logits", {}).values()
+                ),
+                "score_distribution": _distribution(
+                    (discovery_setgn_diagnostics or {}).get("scores", {}).values()
+                ),
+            }
 
             if setgn_scores is None:
                 n_events = len(temporal_graph)
@@ -202,13 +230,13 @@ def run_pipeline(
         from services.gnn_model import GNN_AVAILABLE, compute_gnn_scores, gnn_status_label
 
         gnn_scores = None
-        if GNN_AVAILABLE and setgn_scores is None:
-            # Only run GCN if SE-TGN is inactive (GCN is a fallback baseline)
+        if GNN_AVAILABLE:
+            # Run independently for comparison; its scores never enter SE-TGN.
             gnn_scores = compute_gnn_scores(G, concept_embeddings if concept_embeddings else None)
 
         # Determine analysis mode label
         if setgn_scores is not None:
-            analysis_mode = f"SE-TGN Temporal Analysis (predicting links for {prediction_time})"
+            analysis_mode = "SE-TGN Temporal Analysis (ranking potential future links)"
         elif gnn_scores is not None:
             analysis_mode = gnn_status_label(G)
         else:
@@ -326,7 +354,7 @@ def run_pipeline(
             if matched_gap:
                 cand["research_gap"] = {
                     "score": matched_gap.get("gap_score", 0.0),
-                    "status": matched_gap.get("status", "underexplored"),
+                    "status": matched_gap.get("status", "candidate_gap"),
                     "explanation": matched_gap.get("explanation", ""),
                 }
             else:
@@ -468,15 +496,20 @@ def _run_evaluation(
         # All concept pairs as evaluation universe
         concepts = temporal_graph.unique_concepts()
         all_pairs = all_concept_pairs(concepts)
+        test_negatives = set(all_pairs) - test_positives
 
         # Recompute model scores from the chronological training prefix only.
-        from services.se_tgn import compute_setgn_scores
+        from services.se_tgn import compute_setgn_score_diagnostics
 
-        evaluation_setgn_scores = compute_setgn_scores(
+        evaluation_setgn_diagnostics = compute_setgn_score_diagnostics(
             temporal_graph,
             concept_embeddings,
             training_events=train_events,
             concept_names=concepts,
+        )
+        evaluation_setgn_scores = (
+            evaluation_setgn_diagnostics["scores"]
+            if evaluation_setgn_diagnostics else None
         )
 
         # Build evaluation graph state from training events only. The full graph
@@ -523,15 +556,16 @@ def _run_evaluation(
                 gs = 0.0
             graph_scores[(c_a, c_b)] = gs
 
+        semantic_scores = semantic_similarity_scores(all_pairs, concept_embeddings)
         baselines = run_baseline_comparison(
             all_pairs=all_pairs,
             test_positives=test_positives,
             graph_scores=graph_scores,
             gnn_scores=evaluation_gnn_scores,
             setgn_scores=evaluation_setgn_scores,
+            semantic_scores=semantic_scores,
         )
 
-        semantic_scores = semantic_similarity_scores(all_pairs, concept_embeddings)
         ablation_results = {}
         for variant in ("full", "graph_only", "semantic_only"):
             try:
@@ -549,6 +583,53 @@ def _run_evaluation(
                     "message": str(exc),
                 }
 
+        def distribution(values) -> dict[str, float]:
+            array = np.asarray(list(values), dtype=float)
+            if array.size == 0:
+                return {key: 0.0 for key in ("min", "max", "mean", "median", "std")}
+            return {
+                "min": round(float(array.min()), 6),
+                "max": round(float(array.max()), 6),
+                "mean": round(float(array.mean()), 6),
+                "median": round(float(np.median(array)), 6),
+                "std": round(float(array.std()), 6),
+            }
+
+        train_pairs = {event.pair for event in train_events}
+        test_positive_scores = [
+            evaluation_setgn_scores[pair]
+            for pair in test_positives
+            if evaluation_setgn_scores and pair in evaluation_setgn_scores
+        ]
+        historical_scores = [
+            evaluation_setgn_scores[pair]
+            for pair in train_pairs
+            if evaluation_setgn_scores and pair in evaluation_setgn_scores
+        ]
+        negative_scores = [
+            evaluation_setgn_scores[pair]
+            for pair in test_negatives
+            if evaluation_setgn_scores and pair in evaluation_setgn_scores
+        ]
+        year_values = sorted({event.timestamp for event in temporal_graph.events})
+        evaluation_diagnostics = {
+            "training_year_range": [min((e.timestamp for e in train_events), default=None), max((e.timestamp for e in train_events), default=None)],
+            "validation_year_range": [min((e.timestamp for e in val_events), default=None), max((e.timestamp for e in val_events), default=None)],
+            "test_year_range": [min((e.timestamp for e in test_events), default=None), max((e.timestamp for e in test_events), default=None)],
+            "events_per_year": {str(year): sum(event.timestamp == year for event in temporal_graph.events) for year in year_values},
+            "se_tgn_logit_distribution": distribution((evaluation_setgn_diagnostics or {}).get("logits", {}).values()),
+            "se_tgn_score_distribution": distribution((evaluation_setgn_scores or {}).values()),
+            "se_tgn_historical_positive_distribution": distribution(historical_scores),
+            "se_tgn_test_positive_distribution": distribution(test_positive_scores),
+            "se_tgn_test_negative_distribution": distribution(negative_scores),
+            "gcn_score_distribution": distribution((evaluation_gnn_scores or {}).values()),
+            "semantic_score_distribution": distribution((semantic_scores or {}).values()),
+            "candidate_score_distribution": distribution(cand.get("candidate_score", 0.0) for cand in candidates),
+            "pair_universe_size": len(all_pairs),
+            "test_positive_count": len(test_positives),
+            "test_negative_count": len(test_negatives),
+        }
+
         return {
             "sufficient_data": True,
             "sklearn_available": True,
@@ -556,8 +637,15 @@ def _run_evaluation(
             "val_events": len(val_events),
             "test_events": len(test_events),
             "test_positives": len(test_positives),
+            "test_negatives": len(test_negatives),
+            "evaluation_protocol": (
+                "Global concept-pair universe; positives are pairs observed in the held-out "
+                "test period and negatives are pairs not observed in that period. "
+                "Historical pairs may therefore be evaluated for recurrence."
+            ),
             "baselines": baselines,
             "ablations": ablation_results,
+            "diagnostics": evaluation_diagnostics,
         }
 
     except Exception as exc:

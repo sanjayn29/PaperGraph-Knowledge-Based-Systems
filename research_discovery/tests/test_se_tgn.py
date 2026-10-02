@@ -259,6 +259,16 @@ def test_sample_negative_not_src_or_dst():
         assert neg != "Beta"
 
 
+def test_sample_negative_excludes_observed_positive_pairs():
+    from services.se_tgn import _sample_negative
+
+    concepts = ["A", "B", "C", "D"]
+    observed = {("A", "B"), ("A", "C")}
+    for _ in range(20):
+        neg = _sample_negative(concepts, "A", "B", positive_pairs=observed)
+        assert neg == "D"
+
+
 # ─────────────────────────────────────────────────────────────
 # compute_setgn_scores tests
 # ─────────────────────────────────────────────────────────────
@@ -285,6 +295,17 @@ def test_compute_setgn_scores_canonical_keys():
     if scores:
         for (a, b) in scores.keys():
             assert a <= b, f"Non-canonical key: ({a}, {b})"
+
+
+def test_compute_setgn_score_diagnostics_exposes_logits():
+    from services.se_tgn import compute_setgn_score_diagnostics
+
+    tg, emb = _make_tg(n_papers=5)
+    diagnostics = compute_setgn_score_diagnostics(tg, emb)
+    assert diagnostics is not None
+    assert set(diagnostics) == {"scores", "logits"}
+    assert diagnostics["scores"].keys() == diagnostics["logits"].keys()
+    assert all(0.0 <= score <= 1.0 for score in diagnostics["scores"].values())
 
 
 # ─────────────────────────────────────────────────────────────

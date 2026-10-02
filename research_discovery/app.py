@@ -994,8 +994,15 @@ def _render_candidates_and_personalization(
                     Score: <strong style='color:#58a6ff;'>{score:.3f}</strong>
                     {" (Orig: " + f"{orig_score:.3f})" if 'Personalized' in ranking_view else ""}
                     &nbsp;·&nbsp; SE-TGN: {f"{setgn_score:.3f}" if setgn_score is not None else "N/A"}
+                    &nbsp;·&nbsp; Independent GCN baseline: {f"{cand.get('gnn_score'):.3f}" if cand.get('gnn_score') is not None else "N/A"}
                     &nbsp;·&nbsp; Semantic: {sem_score:.3f}
                     &nbsp;·&nbsp; Graph: {graph_score:.3f}
+                </div>
+                <div style='font-size:0.72rem; color:#6e7681; margin-top:0.25rem;'>
+                    Active formula: {cand.get('ranking_formula', 'Not available')}
+                </div>
+                <div style='font-size:0.68rem; color:#6e7681;'>
+                    GCN scope: {cand.get('gnn_score_scope', 'Not active')}
                 </div>
             </div>
             """,
@@ -1054,8 +1061,8 @@ def _render_research_gaps(research_gaps: list):
         avg_score = sum(g.get("gap_score", 0) for g in research_gaps) / len(research_gaps)
         st.metric("Avg Gap Score", f"{avg_score:.2f}")
     with g3:
-        high_prom = sum(1 for g in research_gaps if g.get("status") == "highly_promising")
-        st.metric("High-Potential Gaps", high_prom)
+        high_prom = sum(1 for g in research_gaps if g.get("status") == "high_potential_candidate")
+        st.metric("High-Potential Candidates", high_prom)
 
     st.markdown("---")
 
@@ -1063,9 +1070,9 @@ def _render_research_gaps(research_gaps: list):
         gap_score = gap.get("gap_score", 0.0)
         score_color = "#3fb950" if gap_score >= 0.75 else "#58a6ff"
         status_badge = (
-            "<span style='background:rgba(63,185,80,0.15); color:#3fb950; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(63,185,80,0.3);'>⭐ Highly Promising</span>"
-            if gap.get("status") == "highly_promising"
-            else "<span style='background:rgba(88,166,255,0.15); color:#58a6ff; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(88,166,255,0.3);'>Underexplored</span>"
+            "<span style='background:rgba(63,185,80,0.15); color:#3fb950; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(63,185,80,0.3);'>High-Potential Candidate</span>"
+            if gap.get("status") == "high_potential_candidate"
+            else "<span style='background:rgba(88,166,255,0.15); color:#58a6ff; padding:2px 8px; border-radius:12px; font-size:0.75rem; border:1px solid rgba(88,166,255,0.3);'>Candidate Gap</span>"
         )
 
         with st.expander(
@@ -1634,6 +1641,7 @@ def _render_evaluation(result: dict):
             uploaded PDFs, the test set is very small, so AUC and AP values have very high
             variance and should NOT be interpreted as stable performance estimates.
             This evaluation exists to show the methodology, not to claim validated performance.
+            Software test counts are separate from predictive model metrics.
         </div>
         """,
         unsafe_allow_html=True,
@@ -1683,15 +1691,20 @@ def _render_technical_details(result: dict):
     )
 
     st.markdown("#### Candidate Score Formula")
-    if gnn_active:
+    setgn_active = any(c.get("setgn_active", False) for c in result.get("candidates", []))
+    if setgn_active:
         st.code(
-            "candidate_score = 0.40 × graph_score + 0.30 × semantic_similarity + 0.30 × gnn_score",
+            "candidate_score = 0.50 × setgn_score + 0.30 × graph_score + 0.20 × semantic_similarity",
+            language="text",
+        )
+    elif gnn_active:
+        st.code(
+            "candidate_score = 0.40 × graph_score + 0.30 × semantic_similarity + 0.30 × independent_gcn_score",
             language="text",
         )
     else:
         st.code(
-            "candidate_score = 0.57 × graph_score + 0.43 × semantic_similarity\n"
-            "(GNN term dropped; weights renormalized)",
+            "candidate_score = 0.57 × graph_score + 0.43 × semantic_similarity",
             language="text",
         )
 
@@ -1709,13 +1722,28 @@ def _render_technical_details(result: dict):
     st.markdown("#### Component Status")
     st.markdown(f"- **Analysis mode:** {result.get('analysis_mode', 'N/A')}")
     st.markdown(f"- **LLM evaluation:** {'Active' if result.get('llm_available') else 'Inactive'}")
-    st.markdown(f"- **GNN component:** {'Active' if gnn_active else 'Inactive'}")
+    st.markdown(f"- **SE-TGN:** {'Active' if setgn_active else 'Inactive'}")
+    st.markdown(f"- **Separate GCN baseline:** {'Active' if gnn_active else 'Inactive'}")
     st.markdown(f"- **Analysis ID:** `{result.get('analysis_id', 'N/A')}`")
 
     gs = result.get("graph_summary", {})
     if gs:
         st.markdown("#### Graph Statistics")
         st.json(gs)
+
+    diagnostics = result.get("diagnostics", {})
+    if diagnostics.get("paper_graph_contributions"):
+        st.markdown("#### Per-Paper Graph Contributions")
+        st.dataframe(diagnostics["paper_graph_contributions"], hide_index=True, width="stretch")
+
+    eval_diagnostics = result.get("evaluation", {}).get("diagnostics", {})
+    if eval_diagnostics:
+        st.markdown("#### Model and Temporal Diagnostics")
+        st.caption(
+            "Formal diagnostics use the chronological training prefix for model state. "
+            "Discovery-mode candidate scores use the complete uploaded corpus."
+        )
+        st.json(eval_diagnostics)
 
     st.markdown("#### Academic Honesty Note")
     st.markdown(

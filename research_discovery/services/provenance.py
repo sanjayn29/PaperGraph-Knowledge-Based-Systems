@@ -10,10 +10,22 @@ traceable to concrete papers, extracted concepts, graph topology, and model metr
 from __future__ import annotations
 
 import logging
+import re
 from typing import Optional
 import networkx as nx
 
 logger = logging.getLogger(__name__)
+
+
+def _evidence_excerpt(paper: dict, concepts: list[str]) -> str:
+    """Return an actual extracted-text snippet or an explicit absence marker."""
+    text = str(paper.get("full_text", ""))
+    if not text:
+        return "Evidence not available from extracted corpus."
+    for segment in re.split(r"(?<=[.!?])\s+|\n+", text):
+        if any(concept.lower() in segment.lower() for concept in concepts):
+            return re.sub(r"\s+", " ", segment).strip()[:400]
+    return "Evidence not available from extracted corpus."
 
 
 def build_candidate_provenance(
@@ -65,6 +77,7 @@ def build_candidate_provenance(
                 "authors": p.get("authors", []),
                 "evidence_type": "direct_cooccurrence",
                 "matched_concepts": [ca, cb],
+                "evidence_excerpt": _evidence_excerpt(p, [ca, cb]),
             })
         elif has_a:
             ca_papers.append(title)
@@ -75,6 +88,7 @@ def build_candidate_provenance(
                 "authors": p.get("authors", []),
                 "evidence_type": "concept_a_context",
                 "matched_concepts": [ca],
+                "evidence_excerpt": _evidence_excerpt(p, [ca]),
             })
         elif has_b:
             cb_papers.append(title)
@@ -85,6 +99,7 @@ def build_candidate_provenance(
                 "authors": p.get("authors", []),
                 "evidence_type": "concept_b_context",
                 "matched_concepts": [cb],
+                "evidence_excerpt": _evidence_excerpt(p, [cb]),
             })
 
     # 2. Graph topology evidence
@@ -177,9 +192,13 @@ def build_candidate_provenance(
             f"Supported directly in {len(direct_papers)} paper(s): {', '.join(direct_papers[:2])}"
         )
     else:
-        narrative_points.append(
-            f"Indirect connection across literature (Shortest path: {graph_evidence['shortest_path_length']})"
-        )
+        if supporting_papers or temporal_evidence["concept_a_events"] or temporal_evidence["concept_b_events"]:
+            narrative_points.append(
+                f"Indirect connection across the uploaded corpus (shortest path: "
+                f"{graph_evidence['shortest_path_length']})"
+            )
+        else:
+            narrative_points.append("Evidence not available from the extracted corpus.")
 
     if graph_evidence["common_neighbors"]:
         narrative_points.append(
@@ -188,7 +207,7 @@ def build_candidate_provenance(
 
     if candidate.get("setgn_score") is not None:
         narrative_points.append(
-            f"SE-TGN temporal link probability: {candidate['setgn_score']:.3f}"
+            f"SE-TGN temporal link model score: {candidate['setgn_score']:.3f}"
         )
 
     narrative_points.append(

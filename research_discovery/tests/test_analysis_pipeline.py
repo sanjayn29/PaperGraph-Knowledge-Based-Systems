@@ -35,13 +35,16 @@ def test_evaluation_trains_setgn_on_train_events_only_and_returns_metrics():
     ]
     captured = {}
 
-    def fake_compute_setgn_scores(*args, **kwargs):
+    def fake_compute_setgn_diagnostics(*args, **kwargs):
         captured["training_events"] = kwargs["training_events"]
         captured["concept_names"] = kwargs["concept_names"]
-        return {pair: 0.5 for pair in all_pairs}
+        return {
+            "scores": {pair: 0.5 for pair in all_pairs},
+            "logits": {pair: 0.0 for pair in all_pairs},
+        }
 
     with patch(
-        "services.se_tgn.compute_setgn_scores", side_effect=fake_compute_setgn_scores
+        "services.se_tgn.compute_setgn_score_diagnostics", side_effect=fake_compute_setgn_diagnostics
     ):
         result = _run_evaluation(
             temporal_graph=temporal_graph,
@@ -82,11 +85,14 @@ def test_evaluation_ablations_use_same_test_universe():
         for index, concept in enumerate(("A", "B", "C", "D"))
     }
 
-    def fake_compute_setgn_scores(*args, **kwargs):
-        return {pair: 0.5 for pair in all_pairs}
+    def fake_compute_setgn_diagnostics(*args, **kwargs):
+        return {
+            "scores": {pair: 0.5 for pair in all_pairs},
+            "logits": {pair: 0.0 for pair in all_pairs},
+        }
 
     with patch(
-        "services.se_tgn.compute_setgn_scores", side_effect=fake_compute_setgn_scores
+        "services.se_tgn.compute_setgn_score_diagnostics", side_effect=fake_compute_setgn_diagnostics
     ):
         result = _run_evaluation(
             temporal_graph=temporal_graph,

@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 PRESET_QUESTIONS: dict[str, str] = {
     "why_recommended": "Why was this connection recommended by the system?",
     "supporting_papers": "Which papers in the corpus support this connection?",
-    "why_gap": "Why is this considered an underexplored research gap?",
+    "why_gap": "Why is this considered a candidate research gap?",
     "research_questions": "Give me three concrete research questions based on this discovery.",
     "experiments": "What experimental methodology could validate this hypothesis?",
     "limitations": "What are the limitations and potential bottlenecks of this research direction?",

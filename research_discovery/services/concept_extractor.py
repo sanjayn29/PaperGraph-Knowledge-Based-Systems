@@ -50,8 +50,22 @@ _DEFAULT_MIN_PAPER_FREQ = 1
 _BOILERPLATE_PHRASES = {
     "acknowledgments", "acknowledgements", "appendix", "appendices",
     "author contributions", "bibliography", "conflict of interest",
-    "copyright", "declaration", "funding", "references",
+    "copyright", "declaration", "funding", "references", "see appendix",
+    "introduction", "related work", "background", "conclusion",
+    "see section", "see table", "long beach", "computer science",
+    "neural information processing systems", "strategic missions",
+    "end-to-end", "mini-batch", "feed-forward", "element-wise",
+    "left-to-right", "state-of-the-art", "rouge-l", "two-layer",
+    "state-of-the", "of-the-art", "real-world", "large-scale",
+    "pre-trained", "pre-train", "input-output", "up-to-date",
+    "sub-optimal", "non-parametric", "sequence-to-sequence", "encoder-decoder",
+    "sentence-pair", "token-level", "question-answering", "cross-entropy",
+    "max-pooling", "point-wise", "per-layer", "set-up", "run-time",
 }
+_NON_CONCEPT_ACRONYMS = {
+    "acm", "arxiv", "cpu", "gpu", "gpus", "ieee", "nips", "sep", "usa",
+}
+_MALFORMED_TERM_RE = re.compile(r"^(?:[A-Za-z]+(?:base|large|small))$")
 _BOILERPLATE_WORDS = {
     "accepted", "available", "chapter", "conference", "copyright",
     "figure", "fig", "international", "issue", "journal", "license",
@@ -91,7 +105,8 @@ _PAGE_NUMBER_RE = re.compile(r"^\s*[-–—]?\s*\d{1,4}\s*[-–—]?\s*$")
 _MIXED_CASE_TERM_RE = re.compile(r"\b[A-Za-z]+(?:[A-Z][A-Za-z]+)+\b")
 _TITLE_HYPHENATED_RE = re.compile(r"\b[A-Za-z]+(?:-[A-Za-z]+)+\b")
 _HYPHENATED_PHRASE_RE = re.compile(
-    r"\b[A-Za-z]+(?:-[A-Za-z]+)+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b"
+    r"\b(?:[A-Z][a-z]+\s+){0,2}[A-Za-z]+(?:-[A-Za-z]+)+"
+    r"(?:\s+[A-Z][a-z]+){0,2}\b"
 )
 
 
@@ -127,10 +142,12 @@ def _main_body_text(text: str) -> str:
 
 def _raw_candidates(text: str) -> list[str]:
     """Collect phrase forms that the lightweight extractor can recognize."""
-    candidates = extract_noun_phrases(text)
-    candidates.extend(_MIXED_CASE_TERM_RE.findall(text))
-    candidates.extend(_TITLE_HYPHENATED_RE.findall(text))
-    candidates.extend(_HYPHENATED_PHRASE_RE.findall(text))
+    candidates: list[str] = []
+    for line in text.splitlines() or [text]:
+        candidates.extend(extract_noun_phrases(line))
+        candidates.extend(_MIXED_CASE_TERM_RE.findall(line))
+        candidates.extend(_TITLE_HYPHENATED_RE.findall(line))
+        candidates.extend(_HYPHENATED_PHRASE_RE.findall(line))
     seen: set[str] = set()
     result: list[str] = []
     for candidate in candidates:
@@ -148,6 +165,11 @@ def _is_boilerplate_phrase(phrase: str) -> bool:
         return True
     if any(lower.startswith(prefix) for prefix in _BOILERPLATE_PREFIXES):
         return True
+    if any(token in lower for token in _BOILERPLATE_PHRASES):
+        return True
+    if words and words.intersection({"introduction", "references", "appendix", "figure", "table"}) \
+            and words != {"figure"}:
+        return True
     return bool(words) and words.issubset(_BOILERPLATE_WORDS)
 
 
@@ -160,21 +182,30 @@ def _is_candidate(phrase: str, source: str) -> bool:
 
     normalized = normalize_concept(phrase)
     lower = normalized.lower()
-    words = re.findall(r"[a-z]+", lower)
+    word_list = re.findall(r"[a-z]+", lower)
+    words = set(word_list)
     if len(words) == 1:
         raw = phrase.strip()
         is_acronym = bool(re.fullmatch(r"[A-Z][A-Z0-9-]{1,8}", raw))
         is_mixed_case = bool(_MIXED_CASE_TERM_RE.fullmatch(raw))
         is_known_term = lower in _SCIENTIFIC_SINGLE_WORDS or lower in SYNONYM_MAP
-        if lower in _GENERIC_SINGLE_WORDS or lower in _BOILERPLATE_WORDS:
+        if (
+            lower in _GENERIC_SINGLE_WORDS
+            or lower in _BOILERPLATE_WORDS
+            or lower in _NON_CONCEPT_ACRONYMS
+            or _MALFORMED_TERM_RE.fullmatch(raw)
+        ):
             return False
         return is_acronym or is_mixed_case or is_known_term
+
+    if words.intersection(_NON_CONCEPT_ACRONYMS):
+        return True
 
     # A phrase with a venue/document marker is metadata even when it contains
     # a legitimate title such as "Neural Information Processing Systems".
     if any(marker in lower for marker in _BOILERPLATE_PREFIXES):
         return False
-    if words and words[0] in {"journal", "proceedings", "conference", "workshop", "volume"}:
+    if word_list and word_list[0] in {"journal", "proceedings", "conference", "workshop", "volume"}:
         return False
     return True
 

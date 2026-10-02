@@ -155,7 +155,7 @@ Open [http://localhost:8501](http://localhost:8501) in your browser.
 
 ## 🧪 Unit Testing Suite
 
-The repository includes **130 passing tests** covering all base modules and the 5 extensions:
+The repository includes **138 passing tests** covering all base modules and the 5 extensions:
 
 ```bash
 python -m pytest tests/ -v
@@ -171,7 +171,7 @@ tests/test_history_compatibility.py ... [PASS]
 tests/test_temporal_graph.py .......... [PASS]
 tests/test_se_tgn.py .................. [PASS]
 tests/test_evaluator.py ............... [PASS]
-============================= 130 passed =============================
+============================= 138 passed =============================
 ```
 
 ---

@@ -160,7 +160,7 @@ def rank_candidates(
         return []
 
     setgn_active = setgn_scores is not None and len(setgn_scores) > 0
-    gnn_active = (not setgn_active) and gnn_scores is not None and len(gnn_scores) > 0
+    gnn_active = gnn_scores is not None and len(gnn_scores) > 0
     centralities = compute_centralities(G)
 
     # Max edge weight for normalization
@@ -210,17 +210,26 @@ def rank_candidates(
                 + _W_SETGN_GRAPH * graph_score
                 + _W_SETGN_SEM   * semantic_sim
             )
+            ranking_formula = (
+                "0.50 × SE-TGN score + 0.30 × graph score + "
+                "0.20 × semantic similarity"
+            )
         elif gnn_active:
             candidate_score = (
                 _W_GCN_GRAPH * graph_score
                 + _W_GCN_SEM   * semantic_sim
                 + _W_GCN_GNN   * gnn_score
             )
+            ranking_formula = (
+                "0.40 × graph score + 0.30 × semantic similarity + "
+                "0.30 × independent GCN score"
+            )
         else:
             candidate_score = (
                 _W_GRAPH_ONLY_GRAPH * graph_score
                 + _W_GRAPH_ONLY_SEM * semantic_sim
             )
+            ranking_formula = "0.57 × graph score + 0.43 × semantic similarity"
 
         candidates.append(
             {
@@ -230,8 +239,10 @@ def rank_candidates(
                 "graph_score": round(graph_score, 4),
                 "semantic_similarity": round(semantic_sim, 4),
                 "gnn_score": round(gnn_score, 4) if gnn_active else None,
+                "gnn_score_scope": "complete discovery graph" if gnn_active else None,
                 "setgn_score": round(setgn_score, 4) if setgn_active else None,
                 "candidate_score": round(float(np.clip(candidate_score, 0.0, 1.0)), 4),
+                "ranking_formula": ranking_formula,
                 "gnn_active": gnn_active,
                 "setgn_active": setgn_active,
                 "prediction_time": prediction_time,

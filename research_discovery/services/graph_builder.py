@@ -125,6 +125,22 @@ def graph_summary(G: nx.Graph) -> dict:
     }
 
 
+def paper_graph_contribution_stats(papers: list[dict]) -> list[dict]:
+    """Report per-paper concept and pair counts without changing graph construction."""
+    stats: list[dict] = []
+    for paper in papers:
+        concepts = paper.get("concepts", [])
+        unique_concepts = list(dict.fromkeys(concepts))
+        stats.append({
+            "paper_id": paper.get("paper_id", ""),
+            "title": paper.get("title", ""),
+            "extracted_concepts": len(concepts),
+            "unique_concepts": len(unique_concepts),
+            "generated_pairs": len(unique_concepts) * (len(unique_concepts) - 1) // 2,
+        })
+    return stats
+
+
 def get_top_concepts(G: nx.Graph, n: int = 10) -> list[tuple[str, int]]:
     """Return the top-n concepts by degree centrality."""
     degree_dict = dict(G.degree())

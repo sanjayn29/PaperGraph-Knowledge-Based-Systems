@@ -24,6 +24,7 @@ def test_build_candidate_provenance():
             "year": 2024,
             "authors": ["Author A"],
             "concepts": ["GNN", "Bioactivity", "Drug Design"],
+            "full_text": "GNN and Bioactivity are evaluated on molecular graphs.",
         },
         {
             "paper_id": "p2",
@@ -48,6 +49,7 @@ def test_build_candidate_provenance():
     assert prov["evidence_strength"] in ("HIGH", "MEDIUM", "EXPLORATORY")
     assert len(prov["supporting_papers"]) >= 1
     assert prov["supporting_papers"][0]["evidence_type"] == "direct_cooccurrence"
+    assert "GNN and Bioactivity" in prov["supporting_papers"][0]["evidence_excerpt"]
     assert "graph_evidence" in prov
     assert "narrative_points" in prov
     assert len(prov["narrative_points"]) > 0
@@ -99,3 +101,14 @@ def test_temporal_provenance_uses_temporal_event_api():
     assert temporal_evidence["first_seen_year_a"] == 2020
     assert temporal_evidence["first_seen_year_b"] == 2021
     assert temporal_evidence["shared_event_years"] == [2022]
+
+
+def test_provenance_marks_missing_extracted_text():
+    provenance = build_candidate_provenance(
+        {"concept_a": "A", "concept_b": "B"},
+        nx.Graph(),
+        [{"paper_id": "p1", "title": "Paper", "concepts": ["A"]}],
+    )
+    assert provenance["supporting_papers"][0]["evidence_excerpt"] == (
+        "Evidence not available from extracted corpus."
+    )

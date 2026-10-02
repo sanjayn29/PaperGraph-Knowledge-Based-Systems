@@ -230,7 +230,6 @@ if SETGN_AVAILABLE:
                 nn.ReLU(),
                 nn.Dropout(p=0.1),
                 nn.Linear(d_hidden, 1),
-                nn.Sigmoid(),
             )
 
         def _build_message(
@@ -291,23 +290,33 @@ if SETGN_AVAILABLE:
             memory.update(src_idx, new_mem_src, timestamp)
             memory.update(dst_idx, new_mem_dst, timestamp)
 
-        def predict(
+        def predict_logit(
             self,
             idx_a: int,
             idx_b: int,
             memory: "NodeMemory",
         ) -> "torch.Tensor":
             """
-            Predict link probability for concept pair (idx_a, idx_b).
+            Return the raw link-prediction logit for a concept pair.
 
             Returns
             -------
-            Tensor scalar (0-dim) in [0, 1].
+            Unbounded scalar logit. Apply sigmoid only for an interpretable
+            ranking score; it is not a calibrated probability.
             """
             mem_a = memory.get(idx_a)  # (d_mem,)
             mem_b = memory.get(idx_b)  # (d_mem,)
             pair_repr = torch.cat([mem_a, mem_b]).unsqueeze(0)  # (1, 2*d_mem)
-            return self.link_predictor(pair_repr).squeeze()  # scalar
+            return self.link_predictor(pair_repr).squeeze()  # scalar logit
+
+        def predict(
+            self,
+            idx_a: int,
+            idx_b: int,
+            memory: "NodeMemory",
+        ) -> "torch.Tensor":
+            """Return the sigmoid-transformed temporal link model score."""
+            return torch.sigmoid(self.predict_logit(idx_a, idx_b, memory))
 
 
 # ─────────────────────────────────────────────────────────────
@@ -377,9 +386,10 @@ def train_setgn(
         model = SETGN()
         memory = NodeMemory(n_concepts)
         optimizer = optim.Adam(model.parameters(), lr=lr)
-        bce = nn.BCELoss()
+        bce = nn.BCEWithLogitsLoss()
 
         model.train()
+        observed_pairs = {event.pair for event in events}
 
         for epoch in range(n_epochs):
             memory.reset()
@@ -398,20 +408,25 @@ def train_setgn(
                 timestamp = float(event.timestamp)
 
                 # ── Positive prediction ──────────────────────────────
-                pos_score = model.predict(src_idx, dst_idx, memory)
+                pos_score = model.predict_logit(src_idx, dst_idx, memory)
                 pos_label = torch.tensor(1.0)
 
                 # ── Negative sampling ────────────────────────────────
                 neg_concept = _sample_negative(
-                    concepts, event.source_concept, event.target_concept
+                    concepts,
+                    event.source_concept,
+                    event.target_concept,
+                    positive_pairs=observed_pairs,
                 )
-                neg_idx = concept_index[neg_concept]
-                neg_score = model.predict(src_idx, neg_idx, memory)
-                neg_label = torch.tensor(0.0)
 
                 # ── Loss + backprop ──────────────────────────────────
                 optimizer.zero_grad()
-                loss = bce(pos_score, pos_label) + bce(neg_score, neg_label)
+                loss = bce(pos_score, pos_label)
+                if neg_concept is not None:
+                    neg_idx = concept_index[neg_concept]
+                    neg_score = model.predict_logit(src_idx, neg_idx, memory)
+                    neg_label = torch.tensor(0.0)
+                    loss = loss + bce(neg_score, neg_label)
                 loss.backward()
                 # Gradient clipping for stability on small datasets
                 nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -446,17 +461,26 @@ def _sample_negative(
     src: str,
     dst: str,
     max_tries: int = 20,
-) -> str:
+    positive_pairs: Optional[set[tuple[str, str]]] = None,
+) -> Optional[str]:
     """
     Sample a concept that is neither src nor dst (negative example).
     Falls back to the first concept if no valid negative is found.
     """
+    positive_pairs = positive_pairs or set()
+
+    def is_valid(candidate: str) -> bool:
+        pair = (min(src, candidate), max(src, candidate))
+        return candidate not in {src, dst} and pair not in positive_pairs
+
     for _ in range(max_tries):
         neg = random.choice(concepts)
-        if neg != src and neg != dst:
+        if is_valid(neg):
             return neg
-    # Fallback
-    return next((c for c in concepts if c != src and c != dst), concepts[0])
+    fallback = next((c for c in concepts if is_valid(c)), None)
+    if fallback is not None:
+        return fallback
+    return None
 
 
 # ─────────────────────────────────────────────────────────────
@@ -519,6 +543,57 @@ def compute_setgn_scores(
 
     logger.info("SE-TGN scores computed for %d concept pairs.", len(scores))
     return scores
+
+
+def compute_setgn_score_diagnostics(
+    temporal_graph,
+    concept_embeddings: dict[str, np.ndarray],
+    training_events: Optional[list] = None,
+    concept_names: Optional[list[str]] = None,
+) -> Optional[dict]:
+    """Return raw logits and sigmoid scores from one leakage-scoped model run."""
+    if not SETGN_AVAILABLE:
+        return None
+
+    trained = train_setgn(
+        temporal_graph,
+        concept_embeddings,
+        training_events=training_events,
+        concept_names=concept_names,
+    )
+    if trained is None:
+        return None
+
+    model, memory, concept_index = trained
+    scores: dict[tuple[str, str], float] = {}
+    logits: dict[tuple[str, str], float] = {}
+    from itertools import combinations as _combs
+
+    model.eval()
+    with torch.no_grad():
+        for concept_a, concept_b in _combs(sorted(concept_index), 2):
+            idx_a = concept_index[concept_a]
+            idx_b = concept_index[concept_b]
+            key = (concept_a, concept_b)
+            raw_logit = float(model.predict_logit(idx_a, idx_b, memory).item())
+            logits[key] = raw_logit
+            scores[key] = float(torch.sigmoid(torch.tensor(raw_logit)).item())
+
+    return {"scores": scores, "logits": logits}
+
+
+def summarize_scores(values) -> dict[str, float]:
+    """Return stable descriptive statistics for model-score diagnostics."""
+    array = np.asarray(list(values), dtype=float)
+    if array.size == 0:
+        return {key: 0.0 for key in ("min", "max", "mean", "median", "std")}
+    return {
+        "min": round(float(np.min(array)), 6),
+        "max": round(float(np.max(array)), 6),
+        "mean": round(float(np.mean(array)), 6),
+        "median": round(float(np.median(array)), 6),
+        "std": round(float(np.std(array)), 6),
+    }
 
 
 # ─────────────────────────────────────────────────────────────

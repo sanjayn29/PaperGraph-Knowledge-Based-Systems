@@ -307,3 +307,22 @@ def test_run_baseline_comparison_includes_setgn():
         setgn_scores=setgn_scores,
     )
     assert "SE-TGN" in result
+
+
+def test_run_baseline_comparison_includes_semantic_and_independent_gcn():
+    pairs = [(f"concept{i}a", f"concept{i}b") for i in range(20)]
+    positives = set(pairs[:5])
+    scores = {pair: 0.5 for pair in pairs}
+
+    result = run_baseline_comparison(
+        all_pairs=pairs,
+        test_positives=positives,
+        graph_scores=scores,
+        gnn_scores=scores,
+        setgn_scores=scores,
+        semantic_scores=scores,
+    )
+
+    assert {"Random", "Static Graph", "Semantic-only", "Independent GCN", "SE-TGN"} <= set(result)
+    assert {result[name]["n_total"] for name in result} == {20}
+    assert {result[name]["n_positive"] for name in result} == {5}
