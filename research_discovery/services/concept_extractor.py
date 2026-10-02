@@ -30,6 +30,7 @@ from typing import Optional
 
 from utils.text_utils import (
     ACADEMIC_STOPWORDS,
+    SYNONYM_MAP,
     extract_noun_phrases,
     is_valid_concept,
     normalize_concept,
@@ -44,6 +45,157 @@ _MAX_CONCEPT_LEN = 60
 # A concept must appear in at least this many papers to be kept in the graph
 _DEFAULT_MIN_PAPER_FREQ = 1
 
+# These terms are useful for locating document metadata, but are not useful
+# concept nodes when they occur in a paper's extracted text.
+_BOILERPLATE_PHRASES = {
+    "acknowledgments", "acknowledgements", "appendix", "appendices",
+    "author contributions", "bibliography", "conflict of interest",
+    "copyright", "declaration", "funding", "references",
+}
+_BOILERPLATE_WORDS = {
+    "accepted", "available", "chapter", "conference", "copyright",
+    "figure", "fig", "international", "issue", "journal", "license",
+    "long", "page", "pages", "papers", "permission", "proceedings",
+    "published", "section", "short", "submitted", "table", "volume", "workshop",
+}
+_BOILERPLATE_PREFIXES = (
+    "in proceedings", "in advances", "advances in", "published in",
+    "proceedings of", "international conference on",
+    "international joint conference",
+)
+_GENERIC_SINGLE_WORDS = {
+    "a", "about", "all", "also", "an", "and", "any", "are", "as", "at",
+    "based", "be", "because", "been", "before", "being", "between", "both",
+    "but", "by", "can", "could", "each", "either", "else", "english", "especially",
+    "even", "every", "finally", "first", "for", "from", "further", "given", "has",
+    "have", "he", "her", "here", "how", "if", "in", "instead", "into", "is", "it",
+    "its", "just", "long", "may", "method", "more", "most", "much", "must", "my",
+    "neural", "no", "nor", "not", "note", "of", "on", "one", "only", "or", "other",
+    "our", "out", "over", "same", "second", "she", "short", "since", "so", "some",
+    "such", "than", "that", "the", "their", "them", "then", "there", "these", "they",
+    "this", "those", "through", "to", "too", "under", "until", "up", "using", "was",
+    "we", "were", "what", "when", "where", "which", "while", "who", "with", "would",
+    "you", "your", "advances", "input", "output", "result", "results",
+}
+_SCIENTIFIC_SINGLE_WORDS = {
+    "attention", "clustering", "embeddings", "graph", "optimization", "reasoning",
+    "retrieval", "transformer", "transformers",
+}
+_SECTION_STOP_RE = re.compile(
+    r"^\s*(?:\d+(?:\.\d+)*\s*)?(?:references|bibliography|acknowledg(?:e)?ments?|"
+    r"appendix|appendices|author contributions|funding|conflict of interest|"
+    r"declaration|copyright)\s*[:.]?\s*$",
+    re.IGNORECASE,
+)
+_PAGE_NUMBER_RE = re.compile(r"^\s*[-–—]?\s*\d{1,4}\s*[-–—]?\s*$")
+_MIXED_CASE_TERM_RE = re.compile(r"\b[A-Za-z]+(?:[A-Z][A-Za-z]+)+\b")
+_TITLE_HYPHENATED_RE = re.compile(r"\b[A-Za-z]+(?:-[A-Za-z]+)+\b")
+_HYPHENATED_PHRASE_RE = re.compile(
+    r"\b[A-Za-z]+(?:-[A-Za-z]+)+\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+){0,2}\b"
+)
+
+
+def _main_body_text(text: str) -> str:
+    """Remove back matter and repeated short PDF layout lines."""
+    lines = [line.strip() for line in text.replace("\r\n", "\n").split("\n")]
+    counts: dict[str, int] = defaultdict(int)
+    for line in lines:
+        key = re.sub(r"\s+", " ", line).lower()
+        if line and len(line) <= 120 and len(line.split()) <= 14:
+            counts[key] += 1
+
+    kept: list[str] = []
+    for line in lines:
+        if _SECTION_STOP_RE.match(line):
+            break
+        if not line or _PAGE_NUMBER_RE.match(line):
+            continue
+        normalized_line = re.sub(r"\s+", " ", line).lower()
+        is_metadata_line = (
+            len(line) <= 120
+            and not re.search(r"[.!?]", line)
+            and any(marker in normalized_line for marker in _BOILERPLATE_PREFIXES)
+        )
+        if is_metadata_line:
+            continue
+        key = re.sub(r"\s+", " ", line).lower()
+        if counts[key] > 1 and len(line.split()) <= 14:
+            continue
+        kept.append(line)
+    return "\n".join(kept)
+
+
+def _raw_candidates(text: str) -> list[str]:
+    """Collect phrase forms that the lightweight extractor can recognize."""
+    candidates = extract_noun_phrases(text)
+    candidates.extend(_MIXED_CASE_TERM_RE.findall(text))
+    candidates.extend(_TITLE_HYPHENATED_RE.findall(text))
+    candidates.extend(_HYPHENATED_PHRASE_RE.findall(text))
+    seen: set[str] = set()
+    result: list[str] = []
+    for candidate in candidates:
+        key = candidate.lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(candidate)
+    return result
+
+
+def _is_boilerplate_phrase(phrase: str) -> bool:
+    lower = re.sub(r"\s+", " ", phrase.strip().lower())
+    words = set(re.findall(r"[a-z]+", lower))
+    if lower in _BOILERPLATE_PHRASES or lower in _BOILERPLATE_PREFIXES:
+        return True
+    if any(lower.startswith(prefix) for prefix in _BOILERPLATE_PREFIXES):
+        return True
+    return bool(words) and words.issubset(_BOILERPLATE_WORDS)
+
+
+def _is_candidate(phrase: str, source: str) -> bool:
+    """Apply context-sensitive quality checks without requiring an NLP model."""
+    if not is_valid_concept(phrase, _MIN_CONCEPT_LEN, _MAX_CONCEPT_LEN):
+        return False
+    if _is_boilerplate_phrase(phrase):
+        return False
+
+    normalized = normalize_concept(phrase)
+    lower = normalized.lower()
+    words = re.findall(r"[a-z]+", lower)
+    if len(words) == 1:
+        raw = phrase.strip()
+        is_acronym = bool(re.fullmatch(r"[A-Z][A-Z0-9-]{1,8}", raw))
+        is_mixed_case = bool(_MIXED_CASE_TERM_RE.fullmatch(raw))
+        is_known_term = lower in _SCIENTIFIC_SINGLE_WORDS or lower in SYNONYM_MAP
+        if lower in _GENERIC_SINGLE_WORDS or lower in _BOILERPLATE_WORDS:
+            return False
+        return is_acronym or is_mixed_case or is_known_term
+
+    # A phrase with a venue/document marker is metadata even when it contains
+    # a legitimate title such as "Neural Information Processing Systems".
+    if any(marker in lower for marker in _BOILERPLATE_PREFIXES):
+        return False
+    if words and words[0] in {"journal", "proceedings", "conference", "workshop", "volume"}:
+        return False
+    return True
+
+
+def _prefer_long_phrases(concepts: list[str]) -> list[str]:
+    """Drop generic fragments when a longer candidate contains them."""
+    lower_concepts = [
+        (concept, set(re.findall(r"[a-z]+", concept.lower())))
+        for concept in concepts
+    ]
+    result: list[str] = []
+    for concept, words in lower_concepts:
+        if any(
+            len(other_words) > len(words) and words < other_words
+            for other_concept, other_words in lower_concepts
+            if other_concept != concept
+        ):
+            continue
+        result.append(concept)
+    return result
+
 
 def extract_concepts_from_paper(paper: dict) -> list[str]:
     """
@@ -57,24 +209,19 @@ def extract_concepts_from_paper(paper: dict) -> list[str]:
     Returns a deduplicated, normalized list of concept strings.
     """
     text_sources = [
-        paper.get("title", ""),
-        paper.get("abstract", ""),
-        paper.get("full_text", ""),
+        ("title", paper.get("title", "")),
+        ("abstract", paper.get("abstract", "")),
+        ("body", _main_body_text(paper.get("full_text", ""))),
     ]
-    combined = " ".join(s for s in text_sources if s)
-
-    raw_phrases = extract_noun_phrases(combined)
 
     normalized: dict[str, str] = {}  # lower_key → canonical form
-    for phrase in raw_phrases:
-        if not is_valid_concept(phrase, _MIN_CONCEPT_LEN, _MAX_CONCEPT_LEN):
-            continue
-        canonical = normalize_concept(phrase)
-        key = canonical.lower()
-        if key not in normalized:
-            normalized[key] = canonical
+    for source, text in text_sources:
+        for phrase in _raw_candidates(text):
+            if _is_candidate(phrase, source):
+                canonical = normalize_concept(phrase)
+                normalized.setdefault(canonical.lower(), canonical)
 
-    return list(normalized.values())
+    return _prefer_long_phrases(list(normalized.values()))
 
 
 def extract_all_concepts(
