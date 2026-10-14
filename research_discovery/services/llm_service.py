@@ -55,7 +55,7 @@ except ImportError:
         "Install with: pip install google-genai"
     )
 
-_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.6-flash").strip()
+_DEFAULT_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.8-flash").strip()
 
 _GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip().strip('"').strip("'")
 
@@ -201,7 +201,7 @@ class LLMService:
 
         # Model cascade to survive per-model free tier quota limits
         model_candidates = [self.model_name]
-        for fallback in ["gemini-2.5-flash", "gemini-1.5-flash", "gemini-2.0-flash", "gemini-3.6-flash"]:
+        for fallback in ["gemini-3.8-flash", "gemini-3.8-flash-lite", "gemini-3.6-flash"]:
             if fallback not in model_candidates:
                 model_candidates.append(fallback)
 
@@ -218,12 +218,24 @@ class LLMService:
                     return response.text
                 except Exception as exc:
                     exc_str = str(exc)
+                    if "404" in exc_str or "NOT_FOUND" in exc_str:
+                        logger.warning(
+                            "Model %s is unavailable (404/NOT_FOUND). Switching to next model candidate...",
+                            model_to_try,
+                        )
+                        break  # Skip retries for non-existent model
                     if "429" in exc_str or "RESOURCE_EXHAUSTED" in exc_str:
                         logger.warning(
                             "Model %s hit quota limit (429). Trying fallback model...",
                             model_to_try,
                         )
                         break  # Break retry loop to immediately try next model candidate
+                    if "503" in exc_str or "UNAVAILABLE" in exc_str:
+                        logger.warning(
+                            "Model %s is currently experiencing high demand (503). Trying fallback model...",
+                            model_to_try,
+                        )
+                        break  # Immediately try fallback rather than waiting on overloaded model
                     logger.warning(
                         "LLM call failed for %s (attempt %d/%d): %s",
                         model_to_try,

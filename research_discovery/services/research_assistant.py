@@ -156,14 +156,11 @@ STRICT INSTRUCTIONS:
     full_prompt = f"{system_prompt}\n\nCONVERSATION:\n" + "\n".join(messages) + "\nAssistant:"
 
     try:
-        if llm._client:
-            response = llm._client.models.generate_content(
-                model=llm.model_name,
-                contents=full_prompt,
-            )
-            return (response.text or "").strip()
-        else:
-            return _fallback_assistant_response(user_query, analysis_result, active_candidate)
+        user_convo_prompt = "CONVERSATION:\n" + "\n".join(messages) + "\nAssistant:"
+        res_text = llm._call_llm(system_prompt, user_convo_prompt)
+        if res_text:
+            return res_text.strip()
+        return _fallback_assistant_response(user_query, analysis_result, active_candidate)
     except Exception as exc:
         logger.warning("Research Assistant LLM query failed: %s", exc)
         return _fallback_assistant_response(user_query, analysis_result, active_candidate)
